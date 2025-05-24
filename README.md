@@ -2,7 +2,7 @@ cot tool, whole app
 
 USAGE:
 
-first copy the BD from the other tool in the DB folder
+first copy the database generated using the other tool in the DB folder 
 
 then, simply launch using:
 
