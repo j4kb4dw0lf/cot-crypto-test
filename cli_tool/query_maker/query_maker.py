@@ -51,7 +51,7 @@ import cpp
  
 from Function f
 where f.getName() in [{primitive_checks}]
-select f, "Primitive in category '{category}'"
+select f, "Primitive in category {category}, name: " + f.getName() + ", params: " + f.getParameterString()
 """
     query_kind = "problem"
     return query_content, query_kind, query_id 

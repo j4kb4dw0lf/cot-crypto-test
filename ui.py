@@ -464,7 +464,7 @@ def action_generate_report(root_window):
             full_bqrs_path = os.path.join(target_directory, bqrs_filename)
             base_filename = os.path.splitext(bqrs_filename)[0]
             output_pdf_name = f"{base_filename}_report.pdf"
-            output_pdf_path = os.path.join(PROJECT_OUTPUTS_DIR, output_pdf_name)
+            output_pdf_path = os.path.join(PROJECT_OUTPUTS_DIR, output_pdf_name).replace('_output', '')
             log_queue.put(f"Generating PDF report from {full_bqrs_path} to {output_pdf_path}...")
             try:
                 cli_make_pdf_report(bqrs_path=full_bqrs_path, output_pdf=output_pdf_path)

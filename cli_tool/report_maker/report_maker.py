@@ -44,21 +44,6 @@ def parse_sarif_file(sarif_path):
                 queries.append(query)
     return queries
 
-def prettify_query_result(query):
-    title = query.get('name', 'Unnamed Query')
-    description = query.get('description', 'No description.')
-    results = query.get('results', [])
-    pretty = f"Query: {title}\n"
-    if description:
-        pretty += f"Description: {description}\n"
-    pretty += "Results:\n"
-    if not results:
-        pretty += "  No results found for this query.\n"
-    else:
-        for idx, result in enumerate(results, 1):
-            pretty += f"  {idx}. {result}\n"
-    return pretty
-
 def bqrs_to_sarif(bqrs_path, sarif_output_path):
     print(f"Attempting to convert BQRS '{bqrs_path}' to SARIF '{sarif_output_path}' using CodeQL CLI...")
     command = [
@@ -90,29 +75,85 @@ def bqrs_to_sarif(bqrs_path, sarif_output_path):
         print(f"An unexpected error occurred during BQRS to SARIF conversion: {e}")
         return None
 
-def make_pdf_report(bqrs_path, output_pdf):
+def make_pdf_report(bqrs_path, output_pdf=None):
+    # Determine SARIF output path (temporary)
     sarif_path = os.path.splitext(bqrs_path)[0] + ".sarif"
+
+    # Convert BQRS to SARIF
     converted_sarif_path = bqrs_to_sarif(bqrs_path, sarif_path)
     if not converted_sarif_path:
         print("BQRS to SARIF conversion failed. Cannot proceed with PDF generation.")
         return None
+
+    # Determine PDF output filename
+    base_filename = os.path.splitext(os.path.basename(bqrs_path))[0]
+    # Replace '_output' with '_report' in the PDF filename
+    if '_output' in base_filename:
+        pdf_filename = base_filename.replace('_output', '_report') + ".pdf"
+    else:
+        pdf_filename = base_filename + "_report.pdf" # Fallback if _output isn't present
+    
+    output_pdf = os.path.join(os.path.dirname(bqrs_path), pdf_filename)
+
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
-    pdf.set_font("Arial", size=12)
+    
+    # Title
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(0, 10, "CodeQL Analysis Report", 0, 1, 'C')
+    pdf.ln(10)
+
     queries = parse_sarif_file(converted_sarif_path)
+
     if not queries:
+        pdf.set_font("Arial", size=12)
         pdf.multi_cell(0, 10, "No query results found or SARIF file was empty/invalid.")
         print("No query results found to generate PDF.")
     else:
-        for query in queries:
-            pretty_query = prettify_query_result(query)
-            pdf.multi_cell(0, 7, pretty_query)
-            pdf.ln(5)
+        for i, query in enumerate(queries):
+            # Query Title
+            pdf.set_font("Arial", "B", 14)
+            pdf.multi_cell(0, 10, f"Query: {query.get('name', 'Unnamed Query')}", 0, 'L')
+            pdf.ln(2)
+
+            # Description
+            pdf.set_font("Arial", "", 10)
+            description = query.get('description', 'No description available.')
+            pdf.multi_cell(0, 6, f"Description: {description}")
+            pdf.ln(2)
+
+            # Results Header
+            pdf.set_font("Arial", "B", 12)
+            pdf.cell(0, 8, "Results:", 0, 1, 'L')
+            pdf.set_font("Arial", "", 10)
+            
+            results = query.get('results', [])
+            if not results:
+                pdf.multi_cell(0, 6, "  No results found for this query.")
+            else:
+                for idx, result in enumerate(results, 1):
+                    # For better readability, split long result lines
+                    pdf.multi_cell(0, 6, f"  {idx}. {result}")
+            
+            # Add a separator if it's not the last query
+            if i < len(queries) - 1:
+                pdf.ln(5)
+                pdf.line(pdf.get_x(), pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
+                pdf.ln(5)
+
     try:
         pdf.output(output_pdf)
         print(f"PDF report generated: {output_pdf}")
     except Exception as e:
         print(f"Error generating PDF: {e}")
         return None
+    finally:
+        # Clean up the generated SARIF file
+        if os.path.exists(converted_sarif_path):
+            try:
+                os.remove(converted_sarif_path)
+                print(f"Removed temporary SARIF file: {converted_sarif_path}")
+            except Exception as e:
+                print(f"Error removing temporary SARIF file {converted_sarif_path}: {e}")
     return output_pdf
