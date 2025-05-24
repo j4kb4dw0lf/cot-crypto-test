@@ -2,9 +2,8 @@ import os
 import subprocess
 import sys
 
-REPO_URL = "https://X"
+REPO_URL = "https://github.com/j4kb4dw0lf/cot-crypto-test"
 LOCAL_PATH = "."
-BUILD_COMMAND = "Y"
 COMMIT_FILE = os.path.join(LOCAL_PATH, ".last_commit")
 
 def get_remote_commit(repo_url):
@@ -40,11 +39,9 @@ def load_saved_commit():
 
 def clone_and_build():
     subprocess.check_call(["git", "clone", REPO_URL, LOCAL_PATH])
-    subprocess.check_call(BUILD_COMMAND, shell=True)
 
 def update_and_build():
     subprocess.check_call(["git", "-C", LOCAL_PATH, "pull"])
-    subprocess.check_call(BUILD_COMMAND, shell=True)
 
 def update():
     remote_commit = get_remote_commit(REPO_URL)

@@ -1,3 +1,7 @@
 *.db
 *__pycache__*
 *.ql
+*.pdf
+*.sarif
+*.bqrs
+.last_commit
