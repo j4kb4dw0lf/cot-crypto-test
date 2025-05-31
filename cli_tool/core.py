@@ -1,11 +1,12 @@
 import sys
 import os
 import sqlite3
-from query_maker.query_maker import get_categories_and_primitives, generate_codeql_query
+from query_maker.query_maker import generate_query_no_args, generate_query_with_args
 from environ_detector.environ_detector import scan_project
 from db_creator_updater.db_creator_updater import update
 from report_maker.report_maker import make_pdf_report
 from utils.utils import log_message
+import subprocess
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'DB', 'crypto_primitives.db')
 DB_PATH = os.path.normpath(DB_PATH)
@@ -15,12 +16,13 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 def get_all_libraries(conn):
     cursor = conn.cursor()
-    cursor.execute("SELECT library_id, name FROM Libraries ORDER BY name")
+    cursor.execute("SELECT library_id, name FROM Libraries ORDER BY library_id")
     return cursor.fetchall()
 
 def main():
     if len(sys.argv) < 2:
         print("Usage: python core.py <command> [options]")
+        print("Commands: scan-project, update-db, report")
         sys.exit(1)
 
     command = sys.argv[1]
@@ -81,61 +83,48 @@ def main():
 
             log_message(f"Starting CodeQL scan for library IDs: {', '.join(map(str, library_ids))} (Project: {project_context_path}) using DB: {codeql_db_path}")
 
-            category_primitives = get_categories_and_primitives(conn, library_ids)
+            query_noargs = generate_query_no_args(conn, library_ids)
+
+            if not query_noargs:
+                log_message("No QL file generated. Nothing to scan."); return
             
-            generated_files = []
-            for category, primitives in category_primitives.items():
-                if not primitives:
-                    continue
-                query = generate_codeql_query(category, primitives)
-                filename = os.path.join(OUTPUT_DIR, f"{category.replace(' ', '_')}.ql")
-                with open(filename, 'w') as f:
-                    f.write(query)
-                log_message(f"Generated {filename}")
-                generated_files.append(filename)
-            
-            if not generated_files:
-                log_message("No QL files generated. Nothing to scan."); return
+            filename = os.path.join(OUTPUT_DIR, "query_noargs.ql")
+            with open(filename, 'w') as f:
+                    f.write(query_noargs)
+            log_message(f"Generated {filename}")
+
             
             outputs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'outputs')
             os.makedirs(outputs_dir, exist_ok=True)
             
             bqrs_output_filename_suffix = '_'.join(map(str, library_ids)) if library_ids else 'all'
-            bqrs_output_file = os.path.join(outputs_dir, f'output_{bqrs_output_filename_suffix}_CLI_scan.sarif')
+            bqrs_output_file = os.path.join(outputs_dir, f'problem_primitives-noargs-analysis.bqrs')
             log_message(f"Running CodeQL queries, output to: {bqrs_output_file}")
             
-            first_query = True
-            for ql_file in generated_files:
-                log_message(f"Running CodeQL query: {os.path.basename(ql_file)}")
-                cmd = [
-                    "codeql", "query", "run", 
-                    f"--database={codeql_db_path}", 
-                    ql_file, 
-                    f"--output={bqrs_output_file}", 
-                ]
-                
-                if not first_query:
-                    cmd.append("--append")
-                
-                cmd.append(f"--sarif-category={os.path.basename(ql_file).replace('.ql', '')}")
+            log_message(f"Running CodeQL query: {os.path.basename(filename)}")
+            cmd = [
+                "codeql", "query", "run", 
+                f"--database={codeql_db_path}", 
+                filename, 
+                f"--output={bqrs_output_file}", 
+            ]
 
-                log_message(f"Executing: {' '.join(cmd)}")
+            log_message(f"Executing: {' '.join(cmd)}")
+
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, check=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
                 
-                try:
-                    result = subprocess.run(cmd, capture_output=True, text=True, check=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
-                    
-                    if result.stdout: log_message(f"CodeQL STDOUT:\n{result.stdout}")
-                    if result.stderr: log_message(f"CodeQL STDERR:\n{result.stderr}")
-                    log_message(f"Successfully ran query: {os.path.basename(ql_file)}")
-                    first_query = False
-                except subprocess.CalledProcessError as e:
-                    log_message(f"Failed to run query: {os.path.basename(ql_file)}. Exit code: {e.returncode}")
-                    log_message(f"CodeQL STDOUT:\n{e.stdout}")
-                    log_message(f"CodeQL STDERR:\n{e.stderr}")
-                except FileNotFoundError:
-                    log_message("Error: 'codeql' command not found. Please ensure CodeQL CLI is in your PATH.")
-                except Exception as e:
-                    log_message(f"An unexpected error occurred during CodeQL query execution: {e}")
+                if result.stdout: log_message(f"CodeQL STDOUT:\n{result.stdout}")
+                if result.stderr: log_message(f"CodeQL STDERR:\n{result.stderr}")
+                log_message(f"Successfully ran query: {os.path.basename(filename)}")
+            except subprocess.CalledProcessError as e:
+                log_message(f"Failed to run query: {os.path.basename(filename)}. Exit code: {e.returncode}")
+                log_message(f"CodeQL STDOUT:\n{e.stdout}")
+                log_message(f"CodeQL STDERR:\n{e.stderr}")
+            except FileNotFoundError:
+                log_message("Error: 'codeql' command not found. Please ensure CodeQL CLI is in your PATH.")
+            except Exception as e:
+                log_message(f"An unexpected error occurred during CodeQL query execution: {e}")
 
         except sqlite3.Error as e:
             log_message(f"Database error: {e}")
@@ -152,12 +141,24 @@ def main():
         log_message("Database updated successfully.")
 
     elif command == 'report':
-        log_message("Generating report...")            
-        make_pdf_report(bqrs_path=='bqrs_file.json', output_pdf='report.pdf')                
+       
+        outputs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'outputs')
+        if len(sys.argv) < 3:
+            
+            print("Usage: python report.py <filename>")
+            print("List of bqrs in output folder:")
+            for filename in os.listdir(outputs_dir):
+                if filename.endswith('.bqrs'):
+                    print(filename)
+            sys.exit(1)   
+
+        path_bqrs =   os.path.join(outputs_dir, sys.argv[2]) 
+        log_message("Generating report...")   
+        make_pdf_report(bqrs_path=path_bqrs)             
         log_message("Report generated successfully.")
 
     else:
-        print("Unknown command. Available commands: scan, generate, update-db, report")
+        print("Unknown command. Available commands: scan-project, update-db, report")
         sys.exit(1)
 
 if __name__ == "__main__":

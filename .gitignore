@@ -5,3 +5,4 @@
 *.sarif
 *.bqrs
 .last_commit
+codeql-db
