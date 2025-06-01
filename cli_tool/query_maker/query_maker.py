@@ -6,55 +6,75 @@ DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'DB', '
 OUTPUT_DIR = 'generated_ql_queries'
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-def get_categories_and_primitives(conn, library_ids):
+# Return CodeQl query to detect primitives that don't require further analysis on arguments.
+# If necessary specify a list of primitive ids or categories ids to exclude from the query
+def generate_query_no_args(conn, library_ids, excl_categories=None, excl_primitives=None):
+
     cursor = conn.cursor()
-    placeholders = ','.join('?' * len(library_ids))
-    sql_query = f"""
-        SELECT 
-            c.name AS category_name, 
-            p.name AS primitive_name
-        FROM 
-            Categories c
-        JOIN 
-            Primitive_Categories pc ON c.category_id = pc.category_id
-        JOIN 
-            Primitives p ON pc.primitive_id = p.primitive_id
-        WHERE 
-            p.library_id IN ({placeholders})
-        ORDER BY 
-            c.name, p.name
+
+    # SQL query
+    placeholders_libraries = ','.join('?' * len(library_ids))
+    placeholders_excl_categories = ','.join('?' * (len(excl_categories) if excl_categories is not None else 0))
+    placeholders_excl_primitives = ','.join('?' * (len(excl_primitives) if excl_primitives is not None else 0))
+    query = f"""
+    SELECT 
+        p.name as PrimitiveName, 
+        c.name as CategoryName,
+        COALESCE(p.comment_alternative, c.comment_alternative_general) AS Alternative
+    FROM Primitives p
+    JOIN Primitive_categories pc ON p.primitive_id = pc.primitive_id
+    JOIN Categories c ON pc.category_id = c.category_id
+    WHERE p.library_id IN ({placeholders_libraries}) AND p.need_arg IS NULL AND 
+    p.primitive_id NOT IN ({placeholders_excl_primitives}) AND c.category_id NOT IN ({placeholders_excl_categories});
     """
-    cursor.execute(sql_query, library_ids)
-    category_primitives = {}
-    for row in cursor.fetchall():
-        category = row[0]
-        primitive = row[1]
-        category_primitives.setdefault(category, []).append(primitive)
-    return category_primitives
 
-def generate_codeql_query(category, primitives):
-    query_id_slug = category.replace('&','').replace(' ', '')
-    query_id = f"{query_id_slug}" 
-    primitive_checks = "\n    ".join([f'"{p}",' for p in primitives])
-    query_content = f"""/**
- * @id cpp/{query_id}
- * @kind problem
- * @problem.severity warning
- * @name Crypto Primitive: {category}
- * @description Finds all cryptographic primitives related to the '{category}' category.
- *
- * This query identifies calls to known cryptographic primitive functions
- * belonging to the '{category}' category, as defined in the database.
- */
+    cursor.execute(query,library_ids)
 
-import cpp
- 
-from Function f
-where f.getName() in [{primitive_checks}]
-select f, "Primitive in category {category}, name: " + f.getName() + ", params: " + f.getParameterString()
-"""
-    query_kind = "problem"
-    return query_content, query_kind, query_id 
+    # Fetch all results
+    rows = cursor.fetchall()
+
+    # Start building the CodeQL content
+
+    codeql_lines = [
+        "/**",
+        "* @id cpp/primitives-noargs-analysis",
+        "* @kind problem",
+        "* @problem.severity warning",
+        "* @name Crypto primitive",
+        "* @description Find cryptographic primitives",
+        "*",
+        "*/",
+        "\nimport cpp\n",
+        "predicate getCategory(string name, string category, string alternative) {"
+    ]
+
+    # Generate the OR-ed predicate clauses
+    for i, (primitive, category, alternative) in enumerate(rows):
+        line = f'  (name = "{primitive}" and category = "{category}" and alternative = "{alternative}")'
+        if i < len(rows) - 1:
+            line += " or"
+        codeql_lines.append(line)
+
+    codeql_lines.append("}\n")
+
+
+    # Add the main query block
+    codeql_lines.extend([
+        "from Function f, string name, string category, string alternative",
+        "where name = f.getName() and getCategory(name, category, alternative)",
+        'select f,  "\\nFunction name: "+ name + "\\n" + "Category: " +  category + "\\n" + "Alternative: " + alternative'
+    ])
+
+    codeql_query = "\n".join(codeql_lines)
+    
+    cursor.close()
+    conn.close()
+
+    return codeql_query
+
+
+def generate_query_with_args(conn, library_ids):
+    pass
 
 def main():
     if len(sys.argv) < 2:
@@ -71,26 +91,18 @@ def main():
     try:
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row 
-        category_primitives = get_categories_and_primitives(conn, library_ids)
-        print("\n--- Generated CodeQL Queries and Metadata ---")
-        print("For each generated .ql file, note the 'Kind' and 'ID'.")
-        print("You will need these values when interpreting the BQRS results with 'codeql bqrs interpret'.")
+        query_noargs = generate_query_no_args(conn, library_ids)
         print("-" * 60)
-        if not category_primitives:
-            print("No categories or primitives found for the given library IDs in the database.")
+        if not query_noargs:
+            print("Failed to generate query")
             print("Please ensure your database is populated and library IDs are correct.")
         else:
-            for category, primitives in category_primitives.items():
-                if not primitives:
-                    continue
-                query_content, ql_kind, ql_id = generate_codeql_query(category, primitives)
-                filename = os.path.join(OUTPUT_DIR, f"{category.replace(' ', '_')}.ql")
-                with open(filename, 'w', encoding='utf-8') as f:
-                    f.write(query_content)
-                print(f"Generated: {filename}")
-                print(f"  Kind: {ql_kind}")
-                print(f"  ID: {ql_id}")
-                print("-" * 60)
+            filename = os.path.join(OUTPUT_DIR, "query_noargs.ql")
+            with open(filename, 'w', encoding='utf-8') as f:
+                f.write(query_noargs)
+            print(f"Generated: {filename}")
+            print("-" * 60)
+            
     except sqlite3.Error as e:
         print(f"Database error occurred: {e}")
         sys.exit(1)

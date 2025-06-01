@@ -45,6 +45,17 @@ def parse_sarif_file(sarif_path):
     return queries
 
 def bqrs_to_sarif(bqrs_path, sarif_output_path):
+
+
+
+    #  command = [
+    #     "codeql", "bqrs", "interpret",
+    #     "--format=sarif-latest",
+    #     f"-t=<{(os.path.basename(bqrs_path)).split('_')[0]}={(os.path.basename(bqrs_path)).split('_')[0]}>",
+    #     f"-t=<cpp/{(os.path.basename(bqrs_path)).split('_')[1]}=cpp/{(os.path.basename(bqrs_path)).split('_')[1]}>",
+    #     f"--output={sarif_output_path}",
+    #     bqrs_path
+    # ]
     print(f"Attempting to convert BQRS '{bqrs_path}' to SARIF '{sarif_output_path}' using CodeQL CLI...")
     command = [
         "codeql", "bqrs", "interpret",
@@ -85,15 +96,19 @@ def make_pdf_report(bqrs_path, output_pdf=None):
         print("BQRS to SARIF conversion failed. Cannot proceed with PDF generation.")
         return None
 
-    # Determine PDF output filename
-    base_filename = os.path.splitext(os.path.basename(bqrs_path))[0]
-    # Replace '_output' with '_report' in the PDF filename
-    if '_output' in base_filename:
-        pdf_filename = base_filename.replace('_output', '_report') + ".pdf"
-    else:
-        pdf_filename = base_filename + "_report.pdf" # Fallback if _output isn't present
-    
-    output_pdf = os.path.join(os.path.dirname(bqrs_path), pdf_filename)
+    output_pdf = None
+
+    # Determine report path
+    if not output_pdf:
+        # Determine PDF output filename
+        base_filename = os.path.splitext(os.path.basename(bqrs_path))[0]
+        # Replace '_output' with '_report' in the PDF filename
+        if '_output' in base_filename:
+            pdf_filename = base_filename.replace('_output', '_report') + ".pdf"
+        else:
+            pdf_filename = base_filename + "_report.pdf" # Fallback if _output isn't present
+        
+        output_pdf = os.path.join(os.path.dirname(bqrs_path), pdf_filename)
 
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
@@ -103,36 +118,21 @@ def make_pdf_report(bqrs_path, output_pdf=None):
     pdf.set_font("Arial", "B", 16)
     pdf.cell(0, 10, "CodeQL Analysis Report", 0, 1, 'C')
     pdf.ln(10)
-
+    pdf.set_font("Arial","", size=12)
     queries = parse_sarif_file(converted_sarif_path)
 
     if not queries:
-        pdf.set_font("Arial", size=12)
         pdf.multi_cell(0, 10, "No query results found or SARIF file was empty/invalid.")
         print("No query results found to generate PDF.")
     else:
         for i, query in enumerate(queries):
-            # Query Title
-            pdf.set_font("Arial", "B", 14)
-            pdf.multi_cell(0, 10, f"Query: {query.get('name', 'Unnamed Query')}", 0, 'L')
-            pdf.ln(2)
 
-            # Description
-            pdf.set_font("Arial", "", 10)
-            description = query.get('description', 'No description available.')
-            pdf.multi_cell(0, 6, f"Description: {description}")
-            pdf.ln(2)
-
-            # Results Header
-            pdf.set_font("Arial", "B", 12)
-            pdf.cell(0, 8, "Results:", 0, 1, 'L')
-            pdf.set_font("Arial", "", 10)
-            
             results = query.get('results', [])
             if not results:
                 pdf.multi_cell(0, 6, "  No results found for this query.")
             else:
                 for idx, result in enumerate(results, 1):
+
                     # For better readability, split long result lines
                     pdf.multi_cell(0, 6, f"  {idx}. {result}")
             
@@ -141,6 +141,8 @@ def make_pdf_report(bqrs_path, output_pdf=None):
                 pdf.ln(5)
                 pdf.line(pdf.get_x(), pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
                 pdf.ln(5)
+            
+            pdf.ln(2)
 
     try:
         pdf.output(output_pdf)

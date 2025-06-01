@@ -1,9 +1,15 @@
-cot tool, whole app
+### GUI Option
+1) Run `python ui.py`
 
-USAGE:
+### CLI Option
+#### Scan project
+1) Run `python core.py scan-project` having in the same working directory the codeQl's database with folder's name `codeql-db` and having the primitivies' database store in a folder named `DB`.
+You will see the different libraries that you have.
 
-first copy the database generated using the other tool in the DB folder 
+2) Run `python core.py scan-project <library id> or any` to analyze the code based on specific (or all) libraries.
+The result will be stored in `outputs` folder.
 
-then, simply launch using:
+#### Create report
+1) Run `python core.py report` to see all the different analysis files stored in the `outputs` folder.
 
-`python3 ui.py`
+2) `python core.py report <filename>` to generate the PDF report into the `output` folder.

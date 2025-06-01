@@ -18,7 +18,7 @@ cli_tool_path = os.path.join(_gui_script_dir, 'cli_tool')
 if cli_tool_path not in sys.path:
     sys.path.insert(0, cli_tool_path)
 try:
-    from cli_tool.query_maker.query_maker import get_categories_and_primitives, generate_codeql_query
+    from cli_tool.query_maker.query_maker import generate_query_no_args, generate_query_with_args
     from cli_tool.environ_detector.environ_detector import scan_project as cli_scan_environment
     from cli_tool.db_creator_updater.db_creator_updater import update as cli_update_db
     from cli_tool.report_maker.report_maker import make_pdf_report as cli_make_pdf_report
@@ -33,8 +33,8 @@ except ImportError as e:
     cli_dependencies_found = False
     def cli_scan_environment(path): raise NotImplementedError("environ_detector not found")
     def cli_update_db(): raise NotImplementedError("db_creator_updater not found")
-    def get_categories_and_primitives(conn, lib_id): raise NotImplementedError("query_maker not found")
-    def generate_codeql_query(cat, prim): raise NotImplementedError("query_maker not found")
+    def generate_query_no_args(cat, prim): raise NotImplementedError("query_maker not found")
+    def generate_query_with_args(cat, prim): raise NotImplementedError("query_maker not found")
     def cli_make_pdf_report(bqrs_path, output_pdf): raise NotImplementedError("report_maker not found")
 
 CORE_DB_PATH = os.path.normpath(os.path.join(CORE_SCRIPT_DIR, 'DB', 'crypto_primitives.db'))
@@ -46,19 +46,14 @@ os.makedirs(PROJECT_OUTPUTS_DIR, exist_ok=True)
 
 def get_all_libraries(conn):
     cursor = conn.cursor()
-    cursor.execute("SELECT library_id, name FROM Libraries ORDER BY name")
+    cursor.execute("SELECT library_id, name FROM Libraries ORDER BY library_id")
     return cursor.fetchall()
 
 ORIGINAL_FOLDER_ICON_BASE64 = """
-R0lGODlhEAAQAMQAAP///wAAAMLCwsbGxgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAACH5BAAAAAAALAAAAAAQABAAAAWjICCOZGmeqKqubOu+cCzPdFHMJkCCkYhMUQpFQZGpIQk
-MowkK4UKBMHhGFQhNQBhMBYh0iQAFhAIBWUcOYMQiAq3ADs=
+iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAAdgAAAHYBTnsmCAAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAADDSURBVDiNpdIxTsNAEIXhL3YXiTZNyhwiDQ00SOlzAw5CkRNwi3QpMLRYUFJRcYEQFHdBFEgQUxhLK2NgF0YaafVWeu+f0fDPGmCEQ+SB/oSbWJMH1D19HktQ//B/jaqjvWOJVSv0pf/Wu+8InnH6mZJFTHDfJThDmUBSdQ1OEke5CzEfMYnADqsIDS4wSzS4DEeY4yUBf4usJXjVbH6YkH6FfWtQ4jgRv2gfCxxhk4C/xgHNIeWYYhyZ/IZbX0/8b/UBywZkP+3SLOIAAAAASUVORK5CYII=/S5xBEMbxz5yCKGk0XWxtbMTisLNR7FKlSHWQdOlshZAyRVrLEAg2ltr6oxHsxXBiEYj5BwJRSNIoMhZ68hIxuVVyb8AbGHjngXnnu8PuMhuZqU5r1Fr9fwAY/F2IiHG8wFQX+Z8y8929CDLz2jGGE2SBL1b/UepR3YQRMYfnf2Gex0QlPsfTzNy8SwMiM0VEYPaqA3+yxA6W8bKi/8RhQd1jrGAdmvis+5ZvYwS7BTm3+VJgDc8K6OE93qBVkPMEC5iuaF8HsKr8ODbxCN8LcnbxGqcu9xGMcv82lngbQ9jqaHH10UtrYRgfqOcmnMeXTlAHQOPWoA7rA/QB+gAPHuC8boCNOgGO8PbGVNwj28NkZp41cNDj4u3M/JGZZx3hld4NJL8wdmMsj4gZl4+Rx/9w5fv4mJnfqmL0H6d1A1wA7a7l+w0x/NIAAAAASUVORK5CYII=
 """
 ORIGINAL_FILE_ICON_BASE64 = """
-R0lGODlhEAAQAMQAAABJSU5OTlBQUGZmZnZ2dmpqam5ubnZ2dn5+foqKiqCgoKWlpa6urri4uLu
-7u729vebm5vz8/P///wAAAAAAAAAAAAAAAAAAAAAAAAAAACH5BAkAAB8ALAAAAAAQABAAAAVe
-ICeOZGmeaKqubDsJgHEAgE4HAGaRkZB0CoOAgrZhgIBSDAFh+AgDJRBYUGBkRCUAYIQAkNww2j
-CAAADs=
+iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAAdgAAAHYBTnsmCAAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAADQSURBVDiNrdJPSkJRHMXxTy+jQMf2NtACmmg7cdIwaA3SoImuokGgU5fg0D24i/6REEHW4HnpIu/nU/DAHdzf5Xw558flX49Y4bfm3OAeJwJ18BOYE2CJKVq5scgAhWbdYobzbUCTWlhgjjbu8od99IBnVZ2kC3ylSynuH50ySjDAS5Ckh3E+qAOM8BEAyu1BHeAdbwGgsw/gCa8B4BrDKNrRl1hggssgTVghLfEM3V3mCHDVZMqVvvIn1gf41huP083gW7WYvir6Lq1UNefwB94DQhY2gk5mAAAAAElFTkSuQmCC/S5xBEMbxz5yCKGk0XWxtbMTisLNR7FKlSHWQdOlshZAyRVrLEAg2ltr6oxHsxXBiEYj5BwJRSNIoMhZ68hIxuVVyb8AbGHjngXnnu8PuMhuZqU5r1Fr9fwAY/F2IiHG8wFQX+Z8y8929CDLz2jGGE2SBL1b/UepR3YQRMYfnf2Gex0QlPsfTzNy8SwMiM0VEYPaqA3+yxA6W8bKi/8RhQd1jrGAdmvis+5ZvYwS7BTm3+VJgDc8K6OE93qBVkPMEC5iuaF8HsKr8ODbxCN8LcnbxGqcu9xGMcv82lngbQ9jqaHH10UtrYRgfqOcmnMeXTlAHQOPWoA7rA/QB+gAPHuC8boCNOgGO8PbGVNwj28NkZp41cNDj4u3M/JGZZx3hld4NJL8wdmMsj4gZl4+Rx/9w5fv4mJnfqmL0H6d1A1wA7a7l+w0x/NIAAAAASUVORK5CYII=
 """
 
 COMMON_KEYWORDS = {
@@ -372,52 +367,38 @@ def action_scan_project_codeql(root_window):
         conn_task = None
         try:
             conn_task = sqlite3.connect(CORE_DB_PATH)
-            category_primitives = get_categories_and_primitives(conn_task, library_ids)
-            if not category_primitives:
-                log_queue.put(f"No categories or primitives found for library IDs: {', '.join(map(str, library_ids))}. No queries generated.")
-                return
-            generated_files = []
-            generated_ids = []
-            for category, primitives in category_primitives.items():
-                if not primitives: continue
-                query,kind,id = generate_codeql_query(category, primitives)
-                os.makedirs(GENERATED_QL_OUTPUT_DIR, exist_ok=True) 
-                filename = os.path.join(GENERATED_QL_OUTPUT_DIR, f"{category.replace(' ', '_')}.ql")
-                with open(filename, 'w') as f:
-                    f.write(query)
-                log_queue.put(f"Generated QL query: {filename}")
-                generated_files.append(filename)
-                generated_ids.append(id)
-            if not generated_files:
-                log_queue.put("No QL files generated. Nothing to scan."); return
+            query_noargs = generate_query_no_args(conn_task, library_ids)
+
+            if not query_noargs:
+                log_queue.put("No QL file generated. Nothing to scan."); return
+
+            os.makedirs(GENERATED_QL_OUTPUT_DIR, exist_ok=True) 
+            filename = os.path.join(GENERATED_QL_OUTPUT_DIR, "query_noargs.ql")
+            with open(filename, 'w') as f:
+                    f.write(query_noargs)
+            log_queue.put(f"Generated {filename}")
+
+
             os.makedirs(PROJECT_OUTPUTS_DIR, exist_ok=True)
-            bqrs_output_filename_suffix = f'{kind}'
-            bqrs_output_file = os.path.join(PROJECT_OUTPUTS_DIR, f'{bqrs_output_filename_suffix}_output.bqrs')
+            bqrs_output_file = os.path.join(PROJECT_OUTPUTS_DIR, 'problem_primitives-noargs-analysis.bqrs')
             log_queue.put(f"Running CodeQL queries, output to: {bqrs_output_file}")
-            action_scan_project_codeql.last_bqrs_file = None 
-            first_query = True 
-            l = 0
-            for ql_file in generated_files:
-                bqrs_output_file_tmp = bqrs_output_file.replace('_output.bqrs', f'_{(os.path.basename(ql_file).replace(".ql", "")).replace("&","").replace(" ", "")}_output.bqrs')
-                log_queue.put(f"Running CodeQL query: {os.path.basename(ql_file)}")
-                cmd = [
-                    "codeql", "query", "run", 
-                    f"--database={codeql_db_path}", 
-                    ql_file, 
-                    f"--output={bqrs_output_file_tmp}", 
-                ]
-                log_queue.put(f"Executing: {' '.join(cmd)}")
-                result = subprocess.run(cmd, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
-                if result.stdout: log_queue.put(f"CodeQL STDOUT:\n{result.stdout}")
-                if result.stderr: log_queue.put(f"CodeQL STDERR:\n{result.stderr}")
-                if result.returncode == 0:
-                    log_queue.put(f"Successfully ran query: {os.path.basename(ql_file)}")
-                    if first_query:
-                        action_scan_project_codeql.last_bqrs_file = bqrs_output_file_tmp
-                        first_query = False
-                else:
-                    log_queue.put(f"Failed to run query: {os.path.basename(ql_file)}. Exit code: {result.returncode}")
-            log_queue.put(f"CodeQL scan finished. bqrs output (if successful): {action_scan_project_codeql.last_bqrs_file or 'N/A'}")
+            
+            log_queue.put(f"Running CodeQL query: {os.path.basename(filename)}")
+            cmd = [
+                "codeql", "query", "run", 
+                f"--database={codeql_db_path}", 
+                filename, 
+                f"--output={bqrs_output_file}", 
+            ]
+            log_queue.put(f"Executing: {' '.join(cmd)}")
+
+            result = subprocess.run(cmd, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+            if result.stdout: log_queue.put(f"CodeQL STDOUT:\n{result.stdout}")
+            if result.stderr: log_queue.put(f"CodeQL STDERR:\n{result.stderr}")
+            if result.returncode == 0:
+                log_queue.put(f"Successfully ran query: {os.path.basename(filename)}")
+            else:
+                log_queue.put(f"Failed to run query: {os.path.basename(filename)}. Exit code: {result.returncode}")            
         except FileNotFoundError:
             log_queue.put("Error: 'codeql' command not found. Please ensure CodeQL CLI is in your PATH.")
         except Exception as e:
@@ -464,7 +445,7 @@ def action_generate_report(root_window):
             full_bqrs_path = os.path.join(target_directory, bqrs_filename)
             base_filename = os.path.splitext(bqrs_filename)[0]
             output_pdf_name = f"{base_filename}_report.pdf"
-            output_pdf_path = os.path.join(PROJECT_OUTPUTS_DIR, output_pdf_name).replace('_output', '')
+            output_pdf_path = os.path.join(PROJECT_OUTPUTS_DIR, output_pdf_name)
             log_queue.put(f"Generating PDF report from {full_bqrs_path} to {output_pdf_path}...")
             try:
                 cli_make_pdf_report(bqrs_path=full_bqrs_path, output_pdf=output_pdf_path)
