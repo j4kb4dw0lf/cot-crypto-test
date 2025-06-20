@@ -368,26 +368,38 @@ def action_scan_project_codeql(root_window):
         try:
             conn_task = sqlite3.connect(CORE_DB_PATH)
             query_noargs = generate_query_no_args(conn_task, library_ids)
+            conn_task = sqlite3.connect(CORE_DB_PATH)
+            query_withargs = generate_query_with_args(conn_task, library_ids)
 
             if not query_noargs:
                 log_queue.put("No QL file generated. Nothing to scan."); return
 
+            if not query_withargs:
+                log_queue.put("No QL file with arguments generated. Using no-args query only.")
+            
             os.makedirs(GENERATED_QL_OUTPUT_DIR, exist_ok=True) 
-            filename = os.path.join(GENERATED_QL_OUTPUT_DIR, "query_noargs.ql")
-            with open(filename, 'w') as f:
-                    f.write(query_noargs)
-            log_queue.put(f"Generated {filename}")
+            filename1 = os.path.join(GENERATED_QL_OUTPUT_DIR, "query_noargs.ql")
+            filename2 = os.path.join(GENERATED_QL_OUTPUT_DIR, "query_withargs.ql")
+            with open(filename1, 'w') as f:
+                f.write(query_noargs)
+            log_queue.put(f"Generated {filename1}")
+
+            with open(filename2, 'w') as f:
+                f.write(query_withargs)
+            log_queue.put(f"Generated {filename2}")
 
 
             os.makedirs(PROJECT_OUTPUTS_DIR, exist_ok=True)
             bqrs_output_file = os.path.join(PROJECT_OUTPUTS_DIR, 'problem_primitives-noargs-analysis.bqrs')
-            log_queue.put(f"Running CodeQL queries, output to: {bqrs_output_file}")
+            brqs_output_file_withargs = os.path.join(PROJECT_OUTPUTS_DIR, 'problem_primitives-withargs-analysis.bqrs')
+
+            log_queue.put(f"Running CodeQL queries, output to: {bqrs_output_file, brqs_output_file_withargs}")
             
-            log_queue.put(f"Running CodeQL query: {os.path.basename(filename)}")
+            log_queue.put(f"Running CodeQL query: {os.path.basename(filename1)} and {os.path.basename(filename2)}")
             cmd = [
                 "codeql", "query", "run", 
                 f"--database={codeql_db_path}", 
-                filename, 
+                filename1, 
                 f"--output={bqrs_output_file}", 
             ]
             log_queue.put(f"Executing: {' '.join(cmd)}")
@@ -396,9 +408,24 @@ def action_scan_project_codeql(root_window):
             if result.stdout: log_queue.put(f"CodeQL STDOUT:\n{result.stdout}")
             if result.stderr: log_queue.put(f"CodeQL STDERR:\n{result.stderr}")
             if result.returncode == 0:
-                log_queue.put(f"Successfully ran query: {os.path.basename(filename)}")
+                log_queue.put(f"Successfully ran query: {os.path.basename(filename1)}")
             else:
-                log_queue.put(f"Failed to run query: {os.path.basename(filename)}. Exit code: {result.returncode}")            
+                log_queue.put(f"Failed to run query: {os.path.basename(filename1)}. Exit code: {result.returncode}")         
+            
+            cmd = [
+                "codeql", "query", "run", 
+                f"--database={codeql_db_path}", 
+                filename2, 
+                f"--output={brqs_output_file_withargs}", 
+            ]
+            log_queue.put(f"Executing: {' '.join(cmd)}")
+            result = subprocess.run(cmd, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+            if result.stdout: log_queue.put(f"CodeQL STDOUT:\n{result.stdout}")
+            if result.stderr: log_queue.put(f"CodeQL STDERR:\n{result.stderr}")
+            if result.returncode == 0:
+                log_queue.put(f"Successfully ran query: {os.path.basename(filename2)}")
+            else:
+                log_queue.put(f"Failed to run query: {os.path.basename(filename2)}. Exit code: {result.returncode}")
         except FileNotFoundError:
             log_queue.put("Error: 'codeql' command not found. Please ensure CodeQL CLI is in your PATH.")
         except Exception as e:

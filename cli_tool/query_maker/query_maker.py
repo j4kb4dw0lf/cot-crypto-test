@@ -1,10 +1,241 @@
 import sqlite3
 import os
 import sys
+from collections import defaultdict
+
+# --- Configuration and Data Structures ---
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'DB', 'crypto_primitives.db')
 OUTPUT_DIR = 'generated_ql_queries'
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# Dictionary of algorithms and their common string representations (tokens)
+ALGOS = {
+    "BlockCiphers": {
+        "AES": ["aes", "aes128", "aes192", "aes256"],
+        "DES": ["des", "3des", "tdes", "des-x", "des3", "desx"],
+        "Camellia": ["camellia"],
+        "ARIA": ["aria"],
+        "SM4": ["sm4"],
+        "Blowfish": ["blowfish", "blf"],
+        "Twofish": ["twofish", "twf"],
+        "Serpent": ["serpent"],
+        "CAST": ["cast"],
+        "IDEA": ["idea"],
+        "SEED": ["seed"],
+        "MARS": ["mars"],
+        "RC2": ["rc2"]
+    },
+    "StreamCiphers": {
+        "ChaCha": ["chacha", "chacha20", "chacha20poly1305", "xchacha20", "chachapoly", "xchacha20poly1305"],
+        "Salsa20": ["salsa20", "xsalsa20", "xsalsa20poly1305", "salsa20poly1305"],
+        "RC4": ["rc4"],
+        "HC": ["hc128", "hc256"],
+        "Rabbit": ["rabbit"],
+        "Sosemanuk": ["sosemanuk"]
+    },
+    "AEAD": {
+        "GCM": ["gcm"],
+        "CCM": ["ccm"],
+        "EAX": ["eax"],
+        "OCB": ["ocb"]
+    },
+    "HashingAlgorithms": {
+        "SHA-general": ["sha"],
+        "SHA-1": ["sha1"],
+        "SHA-2": ["sha2", "sha224", "sha256", "sha384", "sha512"],
+        "SHA-3": ["sha3"],
+        "MD": ["md2", "md4", "md5"],
+        "BLAKE2": ["blake2b", "blake2s"],
+        "BLAKE3": ["blake3"],
+        "SM3": ["sm3"],
+        "RIPEMD": ["ripemd160", "ripemd"],
+        "Whirlpool": ["whirlpool"],
+        "Tiger": ["tiger"],
+        "Keccak": ["keccak"],
+        "SHAKE": ["shake128", "shake256"],
+        "Streebog": ["streebog"],
+        "GOST Hash": ["gosthash"]
+    },
+    "MACs": {
+        "HMAC": ["hmac", "hmacsha", "hmacsha512256", "hmacsha512", "hmacsha256"],
+        "CMAC": ["cmac"],
+        "PMAC": ["pmac"],
+        "Poly1305": ["poly1305"]
+    },
+    "PublicKeyCryptography": {
+        "Encryption & Key Exchange": {
+            "RSA": ["rsa"],
+            "ECIES": ["ecies"],
+            "DH": ["dh"],
+            "ECDH": ["ecdh"],
+            "Curve25519": ["curve25519", "x25519"]
+        }
+    },
+    "DigitalSignatures": {
+        "RSA": ["rsa"],
+        "DSA": ["dsa"],
+        "ECDSA": ["ecdsa", "ecdsap256", "ecdsap384", "ecdsap521"],
+        "EdDSA": ["eddsa", "ed25519", "ed448", "sc25519"],
+        "SM2": ["sm2"]
+    },
+    "KEMs": {
+        "Crystals-Kyber": ["crystals-kyber", "kyber"],
+        "NewHope": ["newhope"],
+        "FrodoKEM": ["frodokem", "frodo"],
+        "SIKE": ["sike", "sidh"],
+        "McEliece": ["mceliece"],
+        "BIKE": ["bike"],
+        "HQC": ["hqc"]
+    },
+    "DigitalSignaturesPQC": {
+        "Crystals-Dilithium": ["crystals-dilithium", "dilithium"],
+        "Falcon": ["falcon"],
+        "SPHINCS+": ["sphincs+", "sphincs"],
+        "XMSS": ["xmss"],
+        "LMS": ["lms"],
+        "Picnic": ["picnic"],
+        "Rainbow": ["rainbow"]
+    }
+}
+
+# Specific algorithm alternatives
+ALTS = {
+ "BlockCiphers": {
+        "AES": "AES-256",
+        "DES": "AES-256",
+        "Camellia": "AES-256",
+        "ARIA": "...",
+        "SM4": "...",
+        "Blowfish": "AES-256",
+        "Twofish": "...",
+        "Serpent": "...",
+        "CAST": "...",
+        "IDEA": "...",
+        "SEED": "...",
+        "MARS": "...",
+        "RC2": "AES-256"
+    },
+    "StreamCiphers": {
+        "ChaCha": "chacha20",
+        "Salsa20": "...",
+        "RC4": "AES-CTR",
+        "HC": "...",
+        "Rabbit": "...",
+        "Sosemanuk": "..."
+    },
+    "AEAD": {
+        "GCM": "SAFE",
+        "CCM": "SAFE",
+        "EAX": "SAFE",
+        "OCB": "SAFE"
+    },
+    "HashingAlgorithms": {
+        "SHA-general": "SHA-3-512",
+        "SHA-1": "SHA-2-512",
+        "SHA-2": "SHA-2-512",
+        "SHA-3": "SHA-3-512",
+        "MD": "SHAKE-256",
+        "BLAKE2": "SHAKE-256",
+        "BLAKE3": "SHAKE-256",
+        "SM3": "SAFE",
+        "RIPEMD": "...",
+        "Whirlpool": "...",
+        "Tiger": "...",
+        "Keccak": "...",
+        "SHAKE": "SHAKE-256",
+        "Streebog": "...",
+        "GOST Hash": "..."
+    },
+    "MACs": {
+        "HMAC": "HMAC-SHA-2",
+        "CMAC": "CMAC-AES",
+        "PMAC": "...",
+        "Poly1305": "..."
+    },
+    "PublicKeyCryptography": {
+        "RSA": "ML-KEM-1024", 
+        "ECIES": "ML-KEM-1024",
+        "DH": "ML-KEM-1024",
+        "ECDH": "ML-KEM-1024",
+        "Curve25519": "ML-KEM-1024"
+    },
+    "DigitalSignatures": {
+        "RSA": "ML-DSA-87",
+        "DSA": "ML-DSA-87",
+        "ECDSA": "ML-DSA-87",
+        "EdDSA": "ML-DSA-87",
+        "SM2": "ML-DSA-87"
+    },
+    "KEMs": {
+        "Crystals-Kyber": "SAFE",
+        "NewHope": "SAFE",
+        "FrodoKEM": "SAFE",
+        "SIKE": "SAFE",
+        "McEliece": "SAFE",
+        "BIKE": "SAFE",
+        "HQC": "SAFE"
+    },
+    "DigitalSignaturesPQC": {
+        "Crystals-Dilithium": "SAFE",
+        "Falcon": "SAFE",
+        "SPHINCS+": "SAFE",
+        "XMSS": "SAFE",
+        "LMS": "SAFE",
+        "Picnic": "SAFE",
+        "Rainbow": "SAFE"
+    }}
+
+# General category alternatives
+ALTS_CATS = {
+    "BlockCiphers": "AES-256",
+    "StreamCiphers": "ChaCha20 & AES-CTR",
+    "AEAD": "SAFE",
+    "HashingAlgorithms": "SHA3-512 & SHA-2-512 & SHAKE-256",
+    "MACs": "HMAC-SHA2 & CMAC-AES",
+    "PublicKeyCryptography": "ML-KEM-1024",
+    "DigitalSignatures": "ML-DSA-87",
+    "KEMs": "SAFE",
+    "DigitalSignaturesPQC": "SAFE"
+}
+
+
+# --- Utility Functions ---
+
+def flatten_categorized_data(categorized_dict):
+    flat_set = set()
+    for _, sub_dict_or_list in categorized_dict.items():
+        if isinstance(sub_dict_or_list, dict):
+            flat_set.update(flatten_categorized_data(sub_dict_or_list))
+        elif isinstance(sub_dict_or_list, list):
+            for item in sub_dict_or_list:
+                flat_set.add(item)
+    return flat_set
+
+ALL_ALGORITHMS = flatten_categorized_data(ALGOS)
+ALGO_TOKEN_TO_INFO = {}
+
+def build_algo_token_info_map(data, path, info_map):
+    if isinstance(data, dict):
+        for key, value in data.items():
+            build_algo_token_info_map(value, path + [key], info_map)
+    elif isinstance(data, list):
+        for token in data:
+            info_map.setdefault(token, set()).add(tuple(path))
+
+build_algo_token_info_map(ALGOS, [], ALGO_TOKEN_TO_INFO)
+
+def get_alternative(path, alts_dict, alts_cats_dict):
+    """Gets the best alternative based on a specific path."""
+    current_level = alts_dict
+    for key in path:
+        if key in current_level:
+            current_level = current_level[key]
+        else:
+            # If path not in specific alts, fallback to category alt
+            return alts_cats_dict.get(path[0], "No specific alternative found.")
+    return current_level if isinstance(current_level, str) else alts_cats_dict.get(path[0], "No specific alternative found.")
+
 
 # Return CodeQl query to detect primitives that don't require further analysis on arguments.
 # If necessary specify a list of primitive ids or categories ids to exclude from the query
@@ -49,12 +280,23 @@ def generate_query_no_args(conn, library_ids, excl_categories=None, excl_primiti
     ]
 
     # Generate the OR-ed predicate clauses
-    for i, (primitive, category, alternative) in enumerate(rows):
-        line = f'  (name = "{primitive}" and category = "{category}" and alternative = "{alternative}")'
-        if i < len(rows) - 1:
-            line += " or"
-        codeql_lines.append(line)
+    # Group primitives by name, collecting all their categories and alternatives
 
+    primitive_groups = defaultdict(list)
+    for primitive, category, alternative in rows:
+        primitive_groups[primitive].append((category, alternative))
+
+    for i, (primitive, cat_alt_list) in enumerate(primitive_groups.items()):
+        alt_to_cats = defaultdict(list)
+        for cat, alt in cat_alt_list:
+            alt_to_cats[alt].append(cat)
+        for j, (alt, cats) in enumerate(alt_to_cats.items()):
+            cats_str = ", ".join(cats)
+            line = f'(name = "{primitive}" and category = "{cats_str}" and alternative = "{alt}")'
+            # Add "or" if not the last clause
+            if not (i == len(primitive_groups) - 1 and j == len(alt_to_cats) - 1):
+                line += " or"
+            codeql_lines.append("  " + line)
     codeql_lines.append("}\n")
 
 
@@ -74,44 +316,126 @@ def generate_query_no_args(conn, library_ids, excl_categories=None, excl_primiti
 
 
 def generate_query_with_args(conn, library_ids):
-    pass
+    return ""  # Placeholder for the 'with-args' query generation logic
 
+#    cursor = conn.cursor()
+#    placeholders_libraries = ','.join('?' * len(library_ids))
+#    query = f"""
+#    SELECT
+#        p.name as FunctionName,
+#        p.need_arg as ArgumentIndex
+#    FROM Primitives p
+#    WHERE p.library_id IN ({placeholders_libraries}) AND p.need_arg IS NOT NULL AND name LIKE '%EVP%'
+#    """
+#    cursor.execute(query, library_ids)
+#    functions_with_args = cursor.fetchall()
+#
+#    if not functions_with_args:
+#        return "" # Return empty if no functions need arg analysis
+#
+#    codeql_lines = [
+#        "/**",
+#        " * @id cpp/primitives-withargs-analysis",
+#        " * @kind problem",
+#        " * @problem.severity warning",
+#        " * @name Insecure cryptographic algorithm specified by argument",
+#        " * @description Finds function calls that use an insecure cryptographic algorithm specified as an argument. This can be a string, a macro, or a call to a function whose name indicates the algorithm (e.g., OpenSSL's EVP_aes_256_cbc()). This query prioritizes the longest matching token to provide the most specific result.",
+#        " * @tags security",
+#        " * cryptography",
+#        " */",
+#        "\nimport cpp\n",
+#        "",
+#        "predicate isInsecureArgument(string functionName, Expr argValue, string category, string alternative) {"
+#    ]
+#
+#    clauses = []
+#    for func_name, arg_index in functions_with_args:
+#        for token, paths in ALGO_TOKEN_TO_INFO.items():
+#            for path in paths:
+#                alternative = get_alternative(list(path), ALTS, ALTS_CATS)
+#                category_path_str = " -> ".join(path)
+#                if alternative != "SAFE":
+#                    clause = (f'  (functionName = "{func_name}" and ( argValue.(StringLiteral).getValue().toLowerCase().matches("%{token}%") or  exists(FunctionCall fc | fc = argValue.getFullyConverted() and fc.getTarget().getName().toLowerCase().matches("%{token}%")) ) and '
+#                              f'category = "{category_path_str}" and alternative = "{alternative}")')
+#                    clauses.append(clause)
+#
+#    if not clauses:
+#        return ""
+#
+#    codeql_lines.append(" or\n".join(clauses))
+#    codeql_lines.append("}\n")
+#
+#    codeql_lines.extend([
+#        "",
+#        "from FunctionCall call, string functionName, Expr argValue, string category, string alternative",
+#        "where",
+#        "  // Standard checks to find a potential match",
+#        "  functionName = call.getTarget().getName() and",
+#        f"  argValue = call.getArgument(0) and",
+#        "  isInsecureArgument(functionName, argValue, category, alternative)",
+#        "",
+#        "select call, \"Call to '\" + functionName + \"' uses an insecure algorithm '\" + argValue + \"'. Category: \" + category + \". Recommended alternative: \" + alternative"
+#    ])
+#
+#    return "\n".join(codeql_lines)
+#
 def main():
     if len(sys.argv) < 2:
         print("Usage: python query_maker.py <library_id_1> [<library_id_2> ...]")
         print("Example: python query_maker.py 1 3")
-        print("  <library_id> refers to the ID of a specific cryptographic library in your database.")
         sys.exit(1)
     try:
         library_ids = [int(arg) for arg in sys.argv[1:]]
     except ValueError:
         print("Error: All provided library IDs must be valid integers.")
         sys.exit(1)
-    conn = None
+
+    # --- Generate Query for Primitives WITHOUT Arguments ---
+    conn_no_args = None
     try:
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row 
-        query_noargs = generate_query_no_args(conn, library_ids)
+        conn_no_args = sqlite3.connect(DB_PATH)
+        conn_no_args.row_factory = sqlite3.Row
+        query_noargs = generate_query_no_args(conn_no_args, library_ids)
         print("-" * 60)
         if not query_noargs:
-            print("Failed to generate query")
-            print("Please ensure your database is populated and library IDs are correct.")
+            print("No primitives found for the 'no-args' query or failed to generate.")
         else:
             filename = os.path.join(OUTPUT_DIR, "query_noargs.ql")
             with open(filename, 'w', encoding='utf-8') as f:
                 f.write(query_noargs)
             print(f"Generated: {filename}")
-            print("-" * 60)
-            
     except sqlite3.Error as e:
-        print(f"Database error occurred: {e}")
-        sys.exit(1)
+        print(f"Database error occurred during 'no-args' query generation: {e}")
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
-        sys.exit(1)
     finally:
-        if conn:
-            conn.close()
+        if conn_no_args:
+            conn_no_args.close()
+            
+    # --- Generate Query for Primitives WITH Arguments ---
+    conn_with_args = None
+    try:
+        conn_with_args = sqlite3.connect(DB_PATH)
+        conn_with_args.row_factory = sqlite3.Row
+        query_with_args = generate_query_with_args(conn_with_args, library_ids)
+        print("-" * 60)
+        if not query_with_args:
+             print("No primitives found for the 'with-args' query or failed to generate.")
+        else:
+            filename_args = os.path.join(OUTPUT_DIR, "query_with_args.ql")
+            with open(filename_args, 'w', encoding='utf-8') as f:
+                f.write(query_with_args)
+            print(f"Generated: {filename_args}")
+    except sqlite3.Error as e:
+        print(f"Database error occurred during 'with-args' query generation: {e}")
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+    finally:
+        if conn_with_args:
+            conn_with_args.close()
+            
+    print("-" * 60)
+
 
 if __name__ == "__main__":
     main()
