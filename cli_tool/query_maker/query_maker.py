@@ -322,7 +322,7 @@ def generate_query_with_args(conn, library_ids):
         p.name as FunctionName,
         p.need_arg as ArgumentIndex
     FROM Primitives p
-    WHERE p.library_id IN ({placeholders_libraries}) AND p.need_arg IS NOT NULL AND name LIKE '%EVP%'
+    WHERE p.library_id IN ({placeholders_libraries}) AND p.need_arg IS NOT NULL'
     """
     cursor.execute(query, library_ids)
     functions_with_args = cursor.fetchall()
@@ -433,7 +433,7 @@ def generate_query_with_args(conn, library_ids):
     codeql_lines.extend([
         "from FunctionCall call, Expr argValue, string functionName, string category, string subCategory, string alternative, int index",
         "where",
-        "  functionName = call.getTarget().getName() and",
+        "  'sha1_ctx'.functionName = call.getTarget().getName() and",
         "  index = isKnownFunction(functionName) and",
         "  argValue = call.getArgument(index) and",
         "  // Bind category and subCategory using getAlgorithmCategory",
