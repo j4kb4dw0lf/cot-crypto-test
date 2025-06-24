@@ -322,7 +322,7 @@ def generate_query_with_args(conn, library_ids):
         p.name as FunctionName,
         p.need_arg as ArgumentIndex
     FROM Primitives p
-    WHERE p.library_id IN ({placeholders_libraries}) AND p.need_arg IS NOT NULL'
+    WHERE p.library_id IN ({placeholders_libraries}) AND p.need_arg IS NOT NULL
     """
     cursor.execute(query, library_ids)
     functions_with_args = cursor.fetchall()
