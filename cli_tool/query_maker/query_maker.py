@@ -433,7 +433,7 @@ def generate_query_with_args(conn, library_ids):
     codeql_lines.extend([
         "from FunctionCall call, Expr argValue, string functionName, string category, string subCategory, string alternative, int index",
         "where",
-        "  'sha1_ctx'.functionName = call.getTarget().getName() and",
+        "  functionName = call.getTarget().getName() and",
         "  index = isKnownFunction(functionName) and",
         "  argValue = call.getArgument(index) and",
         "  // Bind category and subCategory using getAlgorithmCategory",
