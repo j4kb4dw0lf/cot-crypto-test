@@ -1,6 +1,7 @@
 import sqlite3
 import os
 import sys
+import io
 from collections import defaultdict
 
 # --- Configuration and Data Structures ---
@@ -64,13 +65,11 @@ ALGOS = {
         "Poly1305": ["poly1305"]
     },
     "PublicKeyCryptography": {
-        "Encryption & Key Exchange": {
-            "RSA": ["rsa"],
-            "ECIES": ["ecies"],
-            "DH": ["dh"],
-            "ECDH": ["ecdh"],
-            "Curve25519": ["curve25519", "x25519"]
-        }
+        "RSA": ["rsa"],
+        "ECIES": ["ecies"],
+        "DH": ["dh"],
+        "ECDH": ["ecdh"],
+        "Curve25519": ["curve25519", "x25519"]
     },
     "DigitalSignatures": {
         "RSA": ["rsa"],
@@ -303,7 +302,7 @@ def generate_query_no_args(conn, library_ids, excl_categories=None, excl_primiti
     # Add the main query block
     codeql_lines.extend([
         "from Function f, string name, string category, string alternative",
-        "where name = f.getName() and getCategory(name, category, alternative)",
+        'where name = f.getName() and getCategory(name, category, alternative) and not f.getLocation().getFile().getAbsolutePath().matches("%include%")',
         'select f,  "\\nFunction name: "+ name + "\\n" + "Category: " +  category + "\\n" + "Alternative: " + alternative'
     ])
 
@@ -316,69 +315,136 @@ def generate_query_no_args(conn, library_ids, excl_categories=None, excl_primiti
 
 
 def generate_query_with_args(conn, library_ids):
-    return ""  # Placeholder for the 'with-args' query generation logic
+    cursor = conn.cursor()
+    placeholders_libraries = ','.join('?' * len(library_ids))
+    query = f"""
+    SELECT
+        p.name as FunctionName,
+        p.need_arg as ArgumentIndex
+    FROM Primitives p
+    WHERE p.library_id IN ({placeholders_libraries}) AND p.need_arg IS NOT NULL AND name LIKE '%EVP%'
+    """
+    cursor.execute(query, library_ids)
+    functions_with_args = cursor.fetchall()
 
-#    cursor = conn.cursor()
-#    placeholders_libraries = ','.join('?' * len(library_ids))
-#    query = f"""
-#    SELECT
-#        p.name as FunctionName,
-#        p.need_arg as ArgumentIndex
-#    FROM Primitives p
-#    WHERE p.library_id IN ({placeholders_libraries}) AND p.need_arg IS NOT NULL AND name LIKE '%EVP%'
-#    """
-#    cursor.execute(query, library_ids)
-#    functions_with_args = cursor.fetchall()
-#
-#    if not functions_with_args:
-#        return "" # Return empty if no functions need arg analysis
-#
-#    codeql_lines = [
-#        "/**",
-#        " * @id cpp/primitives-withargs-analysis",
-#        " * @kind problem",
-#        " * @problem.severity warning",
-#        " * @name Insecure cryptographic algorithm specified by argument",
-#        " * @description Finds function calls that use an insecure cryptographic algorithm specified as an argument. This can be a string, a macro, or a call to a function whose name indicates the algorithm (e.g., OpenSSL's EVP_aes_256_cbc()). This query prioritizes the longest matching token to provide the most specific result.",
-#        " * @tags security",
-#        " * cryptography",
-#        " */",
-#        "\nimport cpp\n",
-#        "",
-#        "predicate isInsecureArgument(string functionName, Expr argValue, string category, string alternative) {"
-#    ]
-#
-#    clauses = []
-#    for func_name, arg_index in functions_with_args:
-#        for token, paths in ALGO_TOKEN_TO_INFO.items():
-#            for path in paths:
-#                alternative = get_alternative(list(path), ALTS, ALTS_CATS)
-#                category_path_str = " -> ".join(path)
-#                if alternative != "SAFE":
-#                    clause = (f'  (functionName = "{func_name}" and ( argValue.(StringLiteral).getValue().toLowerCase().matches("%{token}%") or  exists(FunctionCall fc | fc = argValue.getFullyConverted() and fc.getTarget().getName().toLowerCase().matches("%{token}%")) ) and '
-#                              f'category = "{category_path_str}" and alternative = "{alternative}")')
-#                    clauses.append(clause)
-#
-#    if not clauses:
-#        return ""
-#
-#    codeql_lines.append(" or\n".join(clauses))
-#    codeql_lines.append("}\n")
-#
-#    codeql_lines.extend([
-#        "",
-#        "from FunctionCall call, string functionName, Expr argValue, string category, string alternative",
-#        "where",
-#        "  // Standard checks to find a potential match",
-#        "  functionName = call.getTarget().getName() and",
-#        f"  argValue = call.getArgument(0) and",
-#        "  isInsecureArgument(functionName, argValue, category, alternative)",
-#        "",
-#        "select call, \"Call to '\" + functionName + \"' uses an insecure algorithm '\" + argValue + \"'. Category: \" + category + \". Recommended alternative: \" + alternative"
-#    ])
-#
-#    return "\n".join(codeql_lines)
-#
+    if not functions_with_args:
+        return "" # Return empty if no functions need arg analysis
+    
+    query_builder = io.StringIO()
+    
+    query_builder.write('predicate isKnownAlgorithm(string category, string subCategory, string token, string alternative) {\n')
+
+    category_clauses = []
+    
+    # Itera su ogni categoria in ALGOS
+    for category, subcategories in ALGOS.items():
+                    
+        subcategory_clauses = []
+        # Itera su ogni sottocategoria
+        for subcategory, tokens in subcategories.items():
+            # 1. Determina l'alternativa corretta
+            # Prova a ottenere l'alternativa specifica per la sottocategoria
+            specific_alt = ALTS.get(category, {}).get(subcategory)
+            
+            # Se l'alternativa specifica non esiste o è "...", usa quella generale
+            if not specific_alt or specific_alt == "...":
+                alternative = ALTS_CATS.get(category, "...")
+            else:
+                alternative = specific_alt
+
+            # 2. Costruisce la condizione per i token
+            if len(tokens) == 1:
+                token_condition = f'token = "{tokens[0]}"'
+            else:
+                token_parts = [f'token = "{t}"' for t in tokens]
+                token_condition = f'({" or ".join(token_parts)})'
+            
+            # 3. Costruisce la clausola completa per la sottocategoria
+            subcategory_clause = f'(subCategory = "{subcategory}" and {token_condition} and alternative = "{alternative}")'
+            subcategory_clauses.append(subcategory_clause)
+        
+        # 4. Unisce le clausole delle sottocategorie con "or"
+        full_subcategory_block = " or ".join(subcategory_clauses)
+        
+        # 5. Costruisce il blocco completo per la categoria
+        category_clause = f'    (category = "{category}" and\n        ( {full_subcategory_block}\n        )\n    )'
+        category_clauses.append(category_clause)
+
+    # 6. Unisce i blocchi delle categorie con "or"
+    query_builder.write(" or ".join(category_clauses))
+    query_builder.write("\n}\n")
+    
+    prdedicate = query_builder.getvalue()
+    query_builder.close()
+    codeql_lines = [
+        "/**",
+        " * @id cpp/primitives-withargs-analysis",
+        " * @kind problem",
+        " * @problem.severity warning",
+        " * @name Insecure cryptographic algorithm specified by argument",
+        " * @description Finds function calls that use an insecure cryptographic algorithm specified as an argument. This can be a string, a macro, or a call to a function whose name indicates the algorithm (e.g., OpenSSL's EVP_aes_256_cbc()). This query prioritizes the longest matching token to provide the most specific result.",
+        " * @tags security",
+        " * cryptography",
+        " */",
+        "\nimport cpp\n",
+        "",
+    ]
+    codeql_lines.append(prdedicate)
+
+    codeql_lines.append(
+        """predicate isInsecureArgument(Expr argValue, string category, string subCategory, string alternative) {
+        exists(string token |
+            isKnownAlgorithm(category, subCategory, token, alternative) and
+            (
+                (argValue instanceof StringLiteral and argValue.(StringLiteral).getValue().matches("%" + token + "%")) or
+                //(argValue instanceof MacroAccess and argValue.getTarget().getName().matches("%" + token + "%")) or
+                //(argValue instanceof FunctionPointerType and argValue.(FunctionPointerType).getTarget().getName().matches("%" + token + "%")) or
+                (argValue instanceof FunctionCall and argValue.(FunctionCall).getTarget().getName().matches("%" + token + "%")) or
+                (argValue instanceof VariableAccess and argValue.(VariableAccess).getTarget().getName().matches("%" + token + "%"))
+            )
+        and
+        not exists(string longerToken |
+            isKnownAlgorithm(category, subCategory, longerToken, alternative) and
+            longerToken.length() > token.length() and
+            (
+                (argValue instanceof StringLiteral and argValue.(StringLiteral).getValue().matches("%" + longerToken + "%")) or
+                //(argValue instanceof MacroAccess and argValue.getTarget().getName().matches("%" + longerToken + "%")) or
+                //(argValue instanceof FunctionPointerType and argValue.(FunctionPointerType).getTarget().getName().matches("%" + longerToken + "%")) or
+                (argValue instanceof FunctionCall and argValue.(FunctionCall).getTarget().getName().matches("%" + longerToken + "%")) or
+                (argValue instanceof VariableAccess and argValue.(VariableAccess).getTarget().getName().matches("%" + longerToken + "%"))
+            )
+        ))
+    }
+    
+    int isKnownFunction(string functionName) {"""
+    )
+    
+
+    for primitive, index in functions_with_args:
+        line = f'(functionName = "{primitive}" and result = {index})'
+        line += " or"
+        codeql_lines.append("  " + line)
+    # Remove the last "or" and close the predicate
+    if codeql_lines[-1].endswith(" or"):
+        codeql_lines[-1] = codeql_lines[-1][:-3]
+    codeql_lines.append("}\n")
+
+
+    codeql_lines.extend([
+        "from FunctionCall call, Expr argValue, string functionName, string category, string subCategory, string alternative, int index",
+        "where",
+        "  functionName = call.getTarget().getName() and",
+        "  index = isKnownFunction(functionName) and",
+        "  argValue = call.getArgument(index) and",
+        "  // Bind category and subCategory using getAlgorithmCategory",
+        "  isInsecureArgument(argValue, category, subCategory, alternative)",
+        "select call,",
+        "  \"Call to '\" + functionName + \"' uses an insecure algorithm via argument '\" + argValue.toString() + \"'. \" +",
+        "  \"Category: \" + category + \". Subcategory: \" + subCategory + \". Recommended alternative: \" + alternative + \".\""
+    ])
+
+    return "\n".join(codeql_lines)
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: python query_maker.py <library_id_1> [<library_id_2> ...]")
