@@ -4,6 +4,7 @@ import sys
 import io
 from collections import defaultdict
 
+
 # --- Configuration and Data Structures ---
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'DB', 'crypto_primitives.db')
@@ -236,6 +237,8 @@ def get_alternative(path, alts_dict, alts_cats_dict):
     return current_level if isinstance(current_level, str) else alts_cats_dict.get(path[0], "No specific alternative found.")
 
 
+
+
 # Return CodeQl query to detect primitives that don't require further analysis on arguments.
 # If necessary specify a list of primitive ids or categories ids to exclude from the query
 def generate_query_no_args(conn, library_ids, excl_categories=None, excl_primitives=None):
@@ -313,23 +316,8 @@ def generate_query_no_args(conn, library_ids, excl_categories=None, excl_primiti
 
     return codeql_query
 
-
-def generate_query_with_args(conn, library_ids):
-    cursor = conn.cursor()
-    placeholders_libraries = ','.join('?' * len(library_ids))
-    query = f"""
-    SELECT
-        p.name as FunctionName,
-        p.need_arg as ArgumentIndex
-    FROM Primitives p
-    WHERE p.library_id IN ({placeholders_libraries}) AND p.need_arg IS NOT NULL
-    """
-    cursor.execute(query, library_ids)
-    functions_with_args = cursor.fetchall()
-
-    if not functions_with_args:
-        return "" # Return empty if no functions need arg analysis
-    
+# Return string for isKnownAlgorithm query
+def returnQueryisKnownAlgorithm():
     query_builder = io.StringIO()
     
     query_builder.write('predicate isKnownAlgorithm(string category, string subCategory, string token, string alternative) {\n')
@@ -373,9 +361,74 @@ def generate_query_with_args(conn, library_ids):
     # 6. Unisce i blocchi delle categorie con "or"
     query_builder.write(" or ".join(category_clauses))
     query_builder.write("\n}\n")
-    
-    prdedicate = query_builder.getvalue()
+    res = query_builder.getvalue()
     query_builder.close()
+    return res
+    
+def generate_query_macros():
+    predicate = returnQueryisKnownAlgorithm()
+
+    codeql_lines = [
+        "/**",
+        " * @id cpp/primitives-macro-analysis",
+        " * @kind problem",
+        " * @problem.severity warning",
+        " * @name Insecure cryptographic algorithm specified by macro",
+        " * @description Finds an insecure cryptographic algorithm specified as a macro. This query prioritizes the longest matching token to provide the most specific result.",
+        " * @tags security",
+        " * cryptography",
+        " */",
+        "\nimport cpp\n",
+        "",
+    ]
+    codeql_lines.append(predicate)
+
+    codeql_lines.append("""
+    predicate longestMatchAlgo(MacroInvocation mi, string category, string subCategory, string alternative) {
+    exists(string token |
+        (isKnownAlgorithm(category, subCategory, token, alternative) and mi.getMacro().getName().toLowerCase().matches("%"+token+"%")) and
+        not exists(string longerToken |
+            isKnownAlgorithm(category, subCategory, longerToken, alternative) and 
+            mi.getMacro().getName().toLowerCase().matches("%"+token+"%") and
+            longerToken.length() > token.length()))
+}\n\n
+    """)
+
+    codeql_lines.extend([
+    "from MacroInvocation mi, string category, string subCategory, string alternative",
+    "where",
+    "  longestMatchAlgo(mi, category, subCategory, alternative)",
+    "select mi,",
+    "  \"\\n Macro '\" + mi.getMacro().getName() + \"' used for an insecure algorithm.\" +",
+    "  \"\\n Category: \" + category +",
+    "  \"\\n Subcategory: \" + subCategory +",
+    "  \"\\n Recommended alternative: \" + alternative + \".\""
+    ])
+
+    return "\n".join(codeql_lines)
+
+
+
+
+def generate_query_with_args(conn, library_ids):
+    cursor = conn.cursor()
+    placeholders_libraries = ','.join('?' * len(library_ids))
+    query = f"""
+    SELECT
+        p.name as FunctionName,
+        p.need_arg as ArgumentIndex
+    FROM Primitives p
+    WHERE p.library_id IN ({placeholders_libraries}) AND p.need_arg IS NOT NULL
+    """
+    cursor.execute(query, library_ids)
+    functions_with_args = cursor.fetchall()
+
+    if not functions_with_args:
+        return "" # Return empty if no functions need arg analysis
+    
+    
+    predicate = returnQueryisKnownAlgorithm()
+
     codeql_lines = [
         "/**",
         " * @id cpp/primitives-withargs-analysis",
@@ -389,7 +442,7 @@ def generate_query_with_args(conn, library_ids):
         "\nimport cpp\n",
         "",
     ]
-    codeql_lines.append(prdedicate)
+    codeql_lines.append(predicate)
 
     codeql_lines.append(
         """predicate isInsecureArgument(Expr argValue, string category, string subCategory, string alternative) {
@@ -501,6 +554,15 @@ def main():
             conn_with_args.close()
             
     print("-" * 60)
+
+    # --- Generate Query for Macro ---
+    query_macro = generate_query_macros()
+    filename_macro = os.path.join(OUTPUT_DIR, "query_macro.ql")
+    with open(filename_macro, 'w', encoding='utf-8') as f:
+        f.write(query_macro)
+    print(f"Generated: {filename_macro}")
+    print("-" * 60)
+
 
 
 if __name__ == "__main__":

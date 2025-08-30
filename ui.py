@@ -10,6 +10,8 @@ import inspect
 import sqlite3
 import traceback
 
+from cli_tool.query_maker.query_maker import generate_query_macros
+
 _gui_script_dir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
 CORE_SCRIPT_DIR = os.path.normpath(os.path.join(_gui_script_dir, 'cli_tool'))
 if _gui_script_dir not in sys.path:
@@ -18,7 +20,7 @@ cli_tool_path = os.path.join(_gui_script_dir, 'cli_tool')
 if cli_tool_path not in sys.path:
     sys.path.insert(0, cli_tool_path)
 try:
-    from cli_tool.query_maker.query_maker import generate_query_no_args, generate_query_with_args
+    from cli_tool.query_maker.query_maker import generate_query_no_args, generate_query_with_args, generate_query_macros
     from cli_tool.environ_detector.environ_detector import scan_project as cli_scan_environment
     from cli_tool.db_creator_updater.db_creator_updater import update as cli_update_db
     from cli_tool.report_maker.report_maker import make_pdf_report as cli_make_pdf_report
@@ -35,6 +37,7 @@ except ImportError as e:
     def cli_update_db(): raise NotImplementedError("db_creator_updater not found")
     def generate_query_no_args(cat, prim): raise NotImplementedError("query_maker not found")
     def generate_query_with_args(cat, prim): raise NotImplementedError("query_maker not found")
+    def generate_query_macro(): raise NotImplementedError("query_maker not found")
     def cli_make_pdf_report(bqrs_path, output_pdf): raise NotImplementedError("report_maker not found")
 
 CORE_DB_PATH = os.path.normpath(os.path.join(CORE_SCRIPT_DIR, 'DB', 'crypto_primitives.db'))
@@ -370,6 +373,7 @@ def action_scan_project_codeql(root_window):
             query_noargs = generate_query_no_args(conn_task, library_ids)
             conn_task = sqlite3.connect(CORE_DB_PATH)
             query_withargs = generate_query_with_args(conn_task, library_ids)
+            query_macro = generate_query_macros()
 
             if not query_noargs:
                 log_queue.put("No QL file generated. Nothing to scan."); return
@@ -380,6 +384,7 @@ def action_scan_project_codeql(root_window):
             os.makedirs(GENERATED_QL_OUTPUT_DIR, exist_ok=True) 
             filename1 = os.path.join(GENERATED_QL_OUTPUT_DIR, "query_noargs.ql")
             filename2 = os.path.join(GENERATED_QL_OUTPUT_DIR, "query_withargs.ql")
+            filename3 = os.path.join(GENERATED_QL_OUTPUT_DIR, "query_macro.ql")
             with open(filename1, 'w') as f:
                 f.write(query_noargs)
             log_queue.put(f"Generated {filename1}")
@@ -388,19 +393,28 @@ def action_scan_project_codeql(root_window):
                 f.write(query_withargs)
             log_queue.put(f"Generated {filename2}")
 
+            with open(filename3, 'w') as f:
+                f.write(query_macro)
+            log_queue.put(f"Generated {filename3}")
 
+
+          
             os.makedirs(PROJECT_OUTPUTS_DIR, exist_ok=True)
-            bqrs_output_file = os.path.join(PROJECT_OUTPUTS_DIR, 'problem_primitives-noargs-analysis.bqrs')
+            bqrs_output_file_noargs = os.path.join(PROJECT_OUTPUTS_DIR, 'problem_primitives-noargs-analysis.bqrs')
             brqs_output_file_withargs = os.path.join(PROJECT_OUTPUTS_DIR, 'problem_primitives-withargs-analysis.bqrs')
-
-            log_queue.put(f"Running CodeQL queries, output to: {bqrs_output_file, brqs_output_file_withargs}")
+            brqs_output_file_macro = os.path.join(PROJECT_OUTPUTS_DIR, 'problem_primitives-macro-analysis.bqrs')
+            log_queue.put(f"Running CodeQL queries, output to: {bqrs_output_file_noargs, brqs_output_file_withargs, brqs_output_file_macro}")
             
-            log_queue.put(f"Running CodeQL query: {os.path.basename(filename1)} and {os.path.basename(filename2)}")
+
+           
+            log_queue.put(f"Running CodeQL query: {os.path.basename(filename1)}, {os.path.basename(filename2)} and {os.path.basename(filename3)}")    
+            
+             # NO ARGS CODEQL COMMAND
             cmd = [
                 "codeql", "query", "run", 
                 f"--database={codeql_db_path}", 
                 filename1, 
-                f"--output={bqrs_output_file}", 
+                f"--output={bqrs_output_file_noargs}", 
             ]
             log_queue.put(f"Executing: {' '.join(cmd)}")
 
@@ -412,6 +426,8 @@ def action_scan_project_codeql(root_window):
             else:
                 log_queue.put(f"Failed to run query: {os.path.basename(filename1)}. Exit code: {result.returncode}")         
             
+
+            # WITH ARGS CODEQL COMMAND
             cmd = [
                 "codeql", "query", "run", 
                 f"--database={codeql_db_path}", 
@@ -426,6 +442,23 @@ def action_scan_project_codeql(root_window):
                 log_queue.put(f"Successfully ran query: {os.path.basename(filename2)}")
             else:
                 log_queue.put(f"Failed to run query: {os.path.basename(filename2)}. Exit code: {result.returncode}")
+
+            # MACRO CODEQL COMMAND
+            cmd = [
+                "codeql", "query", "run", 
+                f"--database={codeql_db_path}", 
+                filename3, 
+                f"--output={brqs_output_file_macro}", 
+            ]
+            log_queue.put(f"Executing: {' '.join(cmd)}")
+            result = subprocess.run(cmd, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+            if result.stdout: log_queue.put(f"CodeQL STDOUT:\n{result.stdout}")
+            if result.stderr: log_queue.put(f"CodeQL STDERR:\n{result.stderr}")
+            if result.returncode == 0:
+                log_queue.put(f"Successfully ran query: {os.path.basename(filename3)}")
+            else:
+                log_queue.put(f"Failed to run query: {os.path.basename(filename3)}. Exit code: {result.returncode}")
+
         except FileNotFoundError:
             log_queue.put("Error: 'codeql' command not found. Please ensure CodeQL CLI is in your PATH.")
         except Exception as e:
