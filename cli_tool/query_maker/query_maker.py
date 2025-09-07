@@ -383,27 +383,39 @@ def generate_query_macros():
     ]
     codeql_lines.append(predicate)
 
+
+    # Replace the old longestMatchAlgo + query builder with this:
     codeql_lines.append("""
-    predicate longestMatchAlgo(MacroInvocation mi, string category, string subCategory, string alternative) {
-    exists(string token |
-        (isKnownAlgorithm(category, subCategory, token, alternative) and mi.getMacro().getName().toLowerCase().matches("%"+token+"%")) and
-        not exists(string longerToken |
-            isKnownAlgorithm(category, subCategory, longerToken, alternative) and 
-            mi.getMacro().getName().toLowerCase().matches("%"+token+"%") and
-            longerToken.length() > token.length()))
-}\n\n
+    /** Does the macro name contain a known token (from any category)? */
+    predicate containsKnownToken(MacroInvocation mi, string token) {
+      exists(string c, string s, string alt |
+        isKnownAlgorithm(c, s, token, alt) and
+        mi.getMacro().getName().toLowerCase().matches("%" + token + "%")
+      )
+    }
+
+    /** The globally-longest token from the macro name */
+    predicate longestTokenInMacro(MacroInvocation mi, string token) {
+      containsKnownToken(mi, token) and
+      not exists(string t2 |
+        containsKnownToken(mi, t2) and t2.length() > token.length()
+      )
+    }
+
     """)
 
     codeql_lines.extend([
-    "from MacroInvocation mi, string category, string subCategory, string alternative",
-    "where",
-    "  longestMatchAlgo(mi, category, subCategory, alternative)",
-    "select mi,",
-    "  \"\\n Macro '\" + mi.getMacro().getName() + \"' used for an insecure algorithm.\" +",
-    "  \"\\n Category: \" + category +",
-    "  \"\\n Subcategory: \" + subCategory +",
-    "  \"\\n Recommended alternative: \" + alternative + \".\""
+      "from MacroInvocation mi, string token, string category, string subCategory, string alternative",
+      "where",
+      "  longestTokenInMacro(mi, token) and",
+      "  isKnownAlgorithm(category, subCategory, token, alternative)",
+      "select mi,",
+      "  \"\\n Macro '\" + mi.getMacro().getName() + \"' used for an insecure algorithm.\" +",
+      "  \"\\n Category: \" + category +",
+      "  \"\\n Subcategory: \" + subCategory +",
+      "  \"\\n Recommended alternative: \" + alternative + \".\""
     ])
+
 
     return "\n".join(codeql_lines)
 
@@ -444,34 +456,28 @@ def generate_query_with_args(conn, library_ids):
     ]
     codeql_lines.append(predicate)
 
-    codeql_lines.append(
-        """predicate isInsecureArgument(Expr argValue, string category, string subCategory, string alternative) {
-        exists(string token |
-            isKnownAlgorithm(category, subCategory, token, alternative) and
-            (
-                (argValue instanceof StringLiteral and argValue.(StringLiteral).getValue().matches("%" + token + "%")) or
-                //(argValue instanceof MacroAccess and argValue.getTarget().getName().matches("%" + token + "%")) or
-                //(argValue instanceof FunctionPointerType and argValue.(FunctionPointerType).getTarget().getName().matches("%" + token + "%")) or
-                (argValue instanceof FunctionCall and argValue.(FunctionCall).getTarget().getName().matches("%" + token + "%")) or
-                (argValue instanceof VariableAccess and argValue.(VariableAccess).getTarget().getName().matches("%" + token + "%"))
-            )
-        and
-        not exists(string longerToken |
-            isKnownAlgorithm(category, subCategory, longerToken, alternative) and
-            longerToken.length() > token.length() and
-            (
-                (argValue instanceof StringLiteral and argValue.(StringLiteral).getValue().matches("%" + longerToken + "%")) or
-                //(argValue instanceof MacroAccess and argValue.getTarget().getName().matches("%" + longerToken + "%")) or
-                //(argValue instanceof FunctionPointerType and argValue.(FunctionPointerType).getTarget().getName().matches("%" + longerToken + "%")) or
-                (argValue instanceof FunctionCall and argValue.(FunctionCall).getTarget().getName().matches("%" + longerToken + "%")) or
-                (argValue instanceof VariableAccess and argValue.(VariableAccess).getTarget().getName().matches("%" + longerToken + "%"))
-            )
-        ))
+    codeql_lines.append("""
+    predicate containsKnownToken(Expr argValue, string token) {
+      exists(string c, string s, string alt |
+        isKnownAlgorithm(c, s, token, alt) and
+        (
+          (argValue instanceof StringLiteral and argValue.(StringLiteral).getValue().toLowerCase().matches("%" + token + "%")) or
+          (argValue instanceof FunctionCall and argValue.(FunctionCall).getTarget().getName().toLowerCase().matches("%" + token + "%")) or
+          (argValue instanceof VariableAccess and argValue.(VariableAccess).getTarget().getName().toLowerCase().matches("%" + token + "%"))
+        )
+      )
     }
-    
+
+    /** The globally-longest token from the macro name */
+    predicate longestTokenInArg(Expr argValue, string token) {
+      containsKnownToken(argValue, token) and
+      not exists(string t2 |
+        containsKnownToken(argValue, t2) and t2.length() > token.length()
+      )
+    }
     int isKnownFunction(string functionName) {"""
     )
-    
+
 
     for primitive, index in functions_with_args:
         line = f'(functionName = "{primitive}" and result = {index})'
@@ -484,17 +490,18 @@ def generate_query_with_args(conn, library_ids):
 
 
     codeql_lines.extend([
-        "from FunctionCall call, Expr argValue, string functionName, string category, string subCategory, string alternative, int index",
+        "from FunctionCall call, Expr argValue, string functionName, string token, string category, string subCategory, string alternative, int index",
         "where",
         "  functionName = call.getTarget().getName() and",
         "  index = isKnownFunction(functionName) and",
         "  argValue = call.getArgument(index) and",
-        "  // Bind category and subCategory using getAlgorithmCategory",
-        "  isInsecureArgument(argValue, category, subCategory, alternative)",
+        "  longestTokenInArg(argValue, token) and",
+        "  isKnownAlgorithm(category, subCategory, token, alternative)",
         "select call,",
         "  \"Call to '\" + functionName + \"' uses an insecure algorithm via argument '\" + argValue.toString() + \"'. \" +",
         "  \"Category: \" + category + \". Subcategory: \" + subCategory + \". Recommended alternative: \" + alternative + \".\""
     ])
+
 
     return "\n".join(codeql_lines)
 
