@@ -1,6 +1,7 @@
 import sqlite3
 import os
 import sys
+import json
 import io
 from collections import defaultdict
 
@@ -11,193 +12,14 @@ DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'DB', '
 OUTPUT_DIR = 'generated_ql_queries'
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Dictionary of algorithms and their common string representations (tokens)
-ALGOS = {
-    "BlockCiphers": {
-        "AES": ["aes", "aes128", "aes192", "aes256"],
-        "DES": ["des", "3des", "tdes", "des-x", "des3", "desx"],
-        "Camellia": ["camellia"],
-        "ARIA": ["aria"],
-        "SM4": ["sm4"],
-        "Blowfish": ["blowfish", "blf"],
-        "Twofish": ["twofish", "twf"],
-        "Serpent": ["serpent"],
-        "CAST": ["cast"],
-        "IDEA": ["idea"],
-        "SEED": ["seed"],
-        "MARS": ["mars"],
-        "RC2": ["rc2"]
-    },
-    "StreamCiphers": {
-        "ChaCha": ["chacha", "chacha20", "chacha20poly1305", "xchacha20", "chachapoly", "xchacha20poly1305"],
-        "Salsa20": ["salsa20", "xsalsa20", "xsalsa20poly1305", "salsa20poly1305"],
-        "RC4": ["rc4"],
-        "HC": ["hc128", "hc256"],
-        "Rabbit": ["rabbit"],
-        "Sosemanuk": ["sosemanuk"]
-    },
-    "AEAD": {
-        "GCM": ["gcm"],
-        "CCM": ["ccm"],
-        "EAX": ["eax"],
-        "OCB": ["ocb"]
-    },
-    "HashingAlgorithms": {
-        "SHA-general": ["sha"],
-        "SHA-1": ["sha1"],
-        "SHA-2": ["sha2", "sha224", "sha256", "sha384", "sha512"],
-        "SHA-3": ["sha3"],
-        "MD": ["md2", "md4", "md5"],
-        "BLAKE2": ["blake2b", "blake2s"],
-        "BLAKE3": ["blake3"],
-        "SM3": ["sm3"],
-        "RIPEMD": ["ripemd160", "ripemd"],
-        "Whirlpool": ["whirlpool"],
-        "Tiger": ["tiger"],
-        "Keccak": ["keccak"],
-        "SHAKE": ["shake128", "shake256"],
-        "Streebog": ["streebog"],
-        "GOST Hash": ["gosthash"]
-    },
-    "MACs": {
-        "HMAC": ["hmac", "hmacsha", "hmacsha512256", "hmacsha512", "hmacsha256"],
-        "CMAC": ["cmac"],
-        "PMAC": ["pmac"],
-        "Poly1305": ["poly1305"]
-    },
-    "PublicKeyCryptography": {
-        "RSA": ["rsa"],
-        "ECIES": ["ecies"],
-        "DH": ["dh"],
-        "ECDH": ["ecdh"],
-        "Curve25519": ["curve25519", "x25519"]
-    },
-    "DigitalSignatures": {
-        "RSA": ["rsa"],
-        "DSA": ["dsa"],
-        "ECDSA": ["ecdsa", "ecdsap256", "ecdsap384", "ecdsap521"],
-        "EdDSA": ["eddsa", "ed25519", "ed448", "sc25519"],
-        "SM2": ["sm2"]
-    },
-    "KEMs": {
-        "Crystals-Kyber": ["crystals-kyber", "kyber"],
-        "NewHope": ["newhope"],
-        "FrodoKEM": ["frodokem", "frodo"],
-        "SIKE": ["sike", "sidh"],
-        "McEliece": ["mceliece"],
-        "BIKE": ["bike"],
-        "HQC": ["hqc"]
-    },
-    "DigitalSignaturesPQC": {
-        "Crystals-Dilithium": ["crystals-dilithium", "dilithium"],
-        "Falcon": ["falcon"],
-        "SPHINCS+": ["sphincs+", "sphincs"],
-        "XMSS": ["xmss"],
-        "LMS": ["lms"],
-        "Picnic": ["picnic"],
-        "Rainbow": ["rainbow"]
-    }
-}
+json_path = os.path.join(os.path.dirname(__file__),"..", "utils", "cats_alts.json")
+with open(json_path, "r", encoding="utf-8") as f:
+    cts_data = json.load(f)
 
-# Specific algorithm alternatives
-ALTS = {
- "BlockCiphers": {
-        "AES": "AES-256",
-        "DES": "AES-256",
-        "Camellia": "AES-256",
-        "ARIA": "...",
-        "SM4": "...",
-        "Blowfish": "AES-256",
-        "Twofish": "...",
-        "Serpent": "...",
-        "CAST": "...",
-        "IDEA": "...",
-        "SEED": "...",
-        "MARS": "...",
-        "RC2": "AES-256"
-    },
-    "StreamCiphers": {
-        "ChaCha": "chacha20",
-        "Salsa20": "...",
-        "RC4": "AES-CTR",
-        "HC": "...",
-        "Rabbit": "...",
-        "Sosemanuk": "..."
-    },
-    "AEAD": {
-        "GCM": "SAFE",
-        "CCM": "SAFE",
-        "EAX": "SAFE",
-        "OCB": "SAFE"
-    },
-    "HashingAlgorithms": {
-        "SHA-general": "SHA-3-512",
-        "SHA-1": "SHA-2-512",
-        "SHA-2": "SHA-2-512",
-        "SHA-3": "SHA-3-512",
-        "MD": "SHAKE-256",
-        "BLAKE2": "SHAKE-256",
-        "BLAKE3": "SHAKE-256",
-        "SM3": "SAFE",
-        "RIPEMD": "...",
-        "Whirlpool": "...",
-        "Tiger": "...",
-        "Keccak": "...",
-        "SHAKE": "SHAKE-256",
-        "Streebog": "...",
-        "GOST Hash": "..."
-    },
-    "MACs": {
-        "HMAC": "HMAC-SHA-2",
-        "CMAC": "CMAC-AES",
-        "PMAC": "...",
-        "Poly1305": "..."
-    },
-    "PublicKeyCryptography": {
-        "RSA": "ML-KEM-1024", 
-        "ECIES": "ML-KEM-1024",
-        "DH": "ML-KEM-1024",
-        "ECDH": "ML-KEM-1024",
-        "Curve25519": "ML-KEM-1024"
-    },
-    "DigitalSignatures": {
-        "RSA": "ML-DSA-87",
-        "DSA": "ML-DSA-87",
-        "ECDSA": "ML-DSA-87",
-        "EdDSA": "ML-DSA-87",
-        "SM2": "ML-DSA-87"
-    },
-    "KEMs": {
-        "Crystals-Kyber": "SAFE",
-        "NewHope": "SAFE",
-        "FrodoKEM": "SAFE",
-        "SIKE": "SAFE",
-        "McEliece": "SAFE",
-        "BIKE": "SAFE",
-        "HQC": "SAFE"
-    },
-    "DigitalSignaturesPQC": {
-        "Crystals-Dilithium": "SAFE",
-        "Falcon": "SAFE",
-        "SPHINCS+": "SAFE",
-        "XMSS": "SAFE",
-        "LMS": "SAFE",
-        "Picnic": "SAFE",
-        "Rainbow": "SAFE"
-    }}
-
-# General category alternatives
-ALTS_CATS = {
-    "BlockCiphers": "AES-256",
-    "StreamCiphers": "ChaCha20 & AES-CTR",
-    "AEAD": "SAFE",
-    "HashingAlgorithms": "SHA3-512 & SHA-2-512 & SHAKE-256",
-    "MACs": "HMAC-SHA2 & CMAC-AES",
-    "PublicKeyCryptography": "ML-KEM-1024",
-    "DigitalSignatures": "ML-DSA-87",
-    "KEMs": "SAFE",
-    "DigitalSignaturesPQC": "SAFE"
-}
+ALGOS = cts_data.get("ALGOS", {})
+OPS =  cts_data.get("OPS", {})
+ALTS = cts_data.get("ALTS", {})
+ALTS_CATS = cts_data.get("ALTS_CATS", {})
 
 
 # --- Utility Functions ---
@@ -211,6 +33,10 @@ def flatten_categorized_data(categorized_dict):
             for item in sub_dict_or_list:
                 flat_set.add(item)
     return flat_set
+
+ALL_ALGOS_FLAT = flatten_categorized_data(ALGOS)
+ALL_OPS_FLAT = flatten_categorized_data(OPS)
+
 
 ALL_ALGORITHMS = flatten_categorized_data(ALGOS)
 ALGO_TOKEN_TO_INFO = {}
@@ -235,8 +61,6 @@ def get_alternative(path, alts_dict, alts_cats_dict):
             # If path not in specific alts, fallback to category alt
             return alts_cats_dict.get(path[0], "No specific alternative found.")
     return current_level if isinstance(current_level, str) else alts_cats_dict.get(path[0], "No specific alternative found.")
-
-
 
 
 # Return CodeQl query to detect primitives that don't require further analysis on arguments.
