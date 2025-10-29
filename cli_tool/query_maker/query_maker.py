@@ -472,7 +472,7 @@ def generate_query_regexp_calls_and_args():
     body_start = textwrap.dedent("""
         from FunctionCall call, Function f, string algorithm, string alternative, string source, string argValue
         where
-        call.getLocation().getFile().getAbsolutePath().matches("%/home/jak%") and
+        call.getLocation().getFile().getAbsolutePath().matches("%/home%") and
           f = call.getTarget() and
           (
             (
@@ -558,7 +558,7 @@ def generate_query_regexp_macro():
     body = textwrap.dedent("""
         from MacroInvocation mi, string macName, string algorithm, string alternative
         where
-        mi.getLocation().getFile().getAbsolutePath().matches("%/home/jak%") and
+        mi.getLocation().getFile().getAbsolutePath().matches("%/home%") and
         macName = mi.getMacro().getName().toLowerCase() and
           (
             (matchesConcatenated(macName) and algorithm = "Concatenated" and alternative = "Separate algorithms recommended")
