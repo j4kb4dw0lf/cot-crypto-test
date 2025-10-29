@@ -299,12 +299,12 @@ def generate_query_with_args(conn, library_ids):
         containsKnownToken(argValue, t2) and t2.length() > token.length()
       )
     }
-    int isKnownFunction(string functionName) {"""
+    boolean isKnownFunction(string functionName) {"""
     )
 
 
     for primitive, index in functions_with_args:
-        line = f'(functionName = "{primitive}" and result = {index})'
+        line = f'(functionName = "{primitive}" and result = true)'
         line += " or"
         codeql_lines.append("  " + line)
     # Remove the last "or" and close the predicate
@@ -314,15 +314,15 @@ def generate_query_with_args(conn, library_ids):
 
 
     codeql_lines.extend([
-        "from FunctionCall call, Expr argValue, string functionName, string token, string category, string subCategory, string alternative, int index",
+        "from FunctionCall call, Expr argValue, string functionName, string token, string category, string subCategory, string alternative, int n",
         "where",
         "  functionName = call.getTarget().getName() and",
-        "  index = isKnownFunction(functionName) and",
-        "  argValue = call.getArgument(index) and",
+        "  isKnownFunction(functionName) = true and",
+        "  argValue = call.getArgument(n) and",
         "  longestTokenInArg(argValue, token) and",
         "  isKnownAlgorithm(category, subCategory, token, alternative)",
         "select call,",
-        "  \"Call to '\" + functionName + \"' uses an insecure algorithm via argument '\" + argValue.toString() + \"'. \" +",
+        "  \"Call to '\" + functionName + \"' uses an insecure algorithm via argument '\" + argValue.toString() + \"'.  at postion \" + n.toString() + \". Detected token: '\" + token + \"'. \" +",
         "  \"Category: \" + category + \". Subcategory: \" + subCategory + \". Recommended alternative: \" + alternative + \".\""
     ])
 
