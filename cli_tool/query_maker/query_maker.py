@@ -188,7 +188,7 @@ def returnQueryisKnownAlgorithm():
     res = query_builder.getvalue()
     query_builder.close()
     return res
-    
+
 def generate_query_macros():
     predicate = returnQueryisKnownAlgorithm()
 
@@ -262,7 +262,7 @@ def generate_query_with_args(conn, library_ids):
     if not functions_with_args:
         return "" # Return empty if no functions need arg analysis
     
-    
+
     predicate = returnQueryisKnownAlgorithm()
 
     codeql_lines = [
@@ -329,6 +329,252 @@ def generate_query_with_args(conn, library_ids):
 
     return "\n".join(codeql_lines)
 
+# ======== Added features (family-grouped + sha[-_]?N + digit-relaxed where needed) ========
+import re
+import textwrap
+
+def _escape(t: str) -> str:
+    return (t).lower()
+
+def _cap_form(t: str) -> str:
+    return t[:1].upper() + t[1:] if t else t
+
+def _with_sep_variants(tokens):
+    """
+    Per token che terminano con cifre (es. sha1, sha256, ed25519) produce anche 'base[-_]?digits'.
+    Aggiunge anche 'base[-_]?[0-9]+' se esistono varianti numeriche per quella base.
+    """
+    out = []
+    bases_with_digits = {}
+    for t in tokens:
+        t = t.lower()
+        m = re.fullmatch(r'([a-z]+)(\d+)', t)
+        if m:
+            base, digits = m.group(1), m.group(2)
+            bases_with_digits.setdefault(base, set()).add(digits)
+            out.append(t)
+            out.append(f"{base}[-_]?{digits}")
+        else:
+            out.append(t)
+    for base in bases_with_digits.keys():
+        out.append(f"{base}[-_]?[0-9]+")
+    # dedup
+    seen, dedup = set(), []
+    for v in out:
+        if v not in seen:
+            seen.add(v)
+            dedup.append(v)
+    return dedup
+
+def _flatten_algos_families():
+    for cat, subs in ALGOS.items():
+        for sub, tokens in subs.items():
+            specific = ALTS.get(cat, {}).get(sub)
+            alt = specific if specific and specific != "..." else ALTS_CATS.get(cat, "...")
+            yield (cat, sub, tokens, alt or "...")
+
+def _collect_mode_tokens():
+    modes = OPS.get("ModesofOperation", {})
+    return sorted({tok.lower() for toks in modes.values() for tok in toks}, key=lambda s: (-len(s), s))
+
+def _concat_group():
+    toks = sorted({t.lower() for _c,_s,toks,_a in _flatten_algos_families() for t in toks}, key=lambda s: (-len(s), s))
+    modes = _collect_mode_tokens()
+    groups = ["|".join(_escape(t) for t in toks)]
+    if modes:
+        groups.append("|".join(_escape(m) for m in modes))
+    return "|".join([g for g in groups if g])
+
+def _family_clause_function_name(subcategory: str, tokens, alt: str):
+    toks_lower = [t.lower() for t in tokens]
+    expanded = _with_sep_variants(toks_lower)  # include sha[-_]?N e sha[-_]?[0-9]+
+    lower_group = "|".join(_escape(v) for v in expanded)
+    uppers = "|".join((t.upper()) for t in toks_lower)
+    caps   = "|".join((_cap_form(t)) for t in toks_lower)
+
+    left_boundary = '(^|[^a-zA-Z0-9]|[0-9][-_])'
+    right_boundary = '([^a-zA-Z]|$)'
+
+    p1 = f'.*{left_boundary}({lower_group}){right_boundary}.*'
+    p2 = f'.*{left_boundary}({lower_group})(?=[A-Z]).*'
+    p3 = f'.*{left_boundary}({uppers})(?=[a-z]).*'
+    p4 = f'.*{left_boundary}({caps})(?=[A-Z]).*'
+    p5 = f'.*(?<=[a-z])({uppers}).*'
+    p6 = f'.*(?<=[A-Z])({lower_group}).*'
+    p7 = f'.*(?<=[a-z])({caps}).*'
+
+    return (
+        f'(not matchesConcatenated(funcName) and ('
+        f' funcName.regexpMatch("{p1}")'
+        f' or originalFuncName.regexpMatch("{p2}")'
+        f' or originalFuncName.regexpMatch("{p3}")'
+        f' or originalFuncName.regexpMatch("{p4}")'
+        f' or originalFuncName.regexpMatch("{p5}")'
+        f' or originalFuncName.regexpMatch("{p6}")'
+        f' or originalFuncName.regexpMatch("{p7}")'
+        f') and algorithm = "{subcategory}" and alternative = "{alt}" and source = "function_name" and argValue = "" )'
+    )
+
+def _family_clause_argument(subcategory: str, tokens, alt: str):
+    toks_lower = [t.lower() for t in tokens]
+    expanded = _with_sep_variants(toks_lower)
+    lower_group = "|".join(_escape(v) for v in expanded)
+    left_boundary = '(^|[^a-zA-Z0-9]|[0-9][-_])'
+    right_boundary = '([^a-zA-Z]|$)'
+    p1 = f'.*{left_boundary}({lower_group}){right_boundary}.*'
+    return (
+        f'(not matchesConcatenated(localArgValue) and localArgValue.regexpMatch("{p1}") '
+        f'and algorithm = "{subcategory}" and alternative = "{alt}" and source = "function_name" and argValue = "" )'
+    )
+
+def generate_query_regexp_calls_and_args():
+    """
+    Versione family-grouped con varianti sha[-_]?N e camelCase come nel primo messaggio.
+    """
+    mode_tokens = _collect_mode_tokens()
+    concat_group = _concat_group()
+
+    matches_conc = textwrap.dedent(f"""
+        // Helper predicate per concatenazioni di token
+        bindingset[s]
+        predicate matchesConcatenated(string s) {{
+          s.regexpMatch(".*(({concat_group})([-_/0-9]*[a-zA-Z]*)*([^a-zA-Z0-9]|[-_/0-9])+({concat_group})([-_/0-9]*[a-zA-Z]*)*).*")
+        }}
+    """).rstrip()
+
+    fn_clauses = []
+    arg_clauses = []
+    for _cat, sub, tokens, alt in _flatten_algos_families():
+        fn_clauses.append(_family_clause_function_name(sub, tokens, alt))
+        arg_clauses.append(_family_clause_argument(sub, tokens, alt))
+
+    # Modalità come SAFE
+    for m in mode_tokens:
+        # solo minuscole con boundary; non serve camelCase per le mode
+        lg = _escape(m)
+        p = f'.*((^|[^a-zA-Z0-9]|[0-9][-_])({lg})([^a-zA-Z]|$)).*'
+        fn_clauses.append(f'(not matchesConcatenated(funcName) and funcName.regexpMatch("{p}") and algorithm = "{m.upper()}" and alternative = "SAFE" and source = "function_name" and argValue = "")')
+        arg_clauses.append(f'(not matchesConcatenated(localArgValue) and localArgValue.regexpMatch("{p}") and algorithm = "{m.upper()}" and alternative = "SAFE")')
+
+    header = textwrap.dedent("""
+        /**
+ * @id cpp/primitives-functions-regexp-analysis
+ * @kind problem
+ * @problem.severity warning
+ * @name Insecure cryptographic algorithm specified by macro
+ * @description Finds an insecure cryptographic algorithm specified as a macro. This query prioritizes the longest matching token to provide the most specific result.
+ * @tags security
+ * cryptography
+         */
+        import cpp
+    """).lstrip()
+
+    body_start = textwrap.dedent("""
+        from FunctionCall call, Function f, string algorithm, string alternative, string source, string argValue
+        where
+        call.getLocation().getFile().getAbsolutePath().matches("%/home/jak%") and
+          f = call.getTarget() and
+          (
+            (
+              exists(string funcName, string originalFuncName |
+                funcName = f.getName().toLowerCase() and
+                originalFuncName = f.getName() |
+                (matchesConcatenated(funcName) and algorithm = "Concatenated" and alternative = "Separate algorithms recommended" and source = "function_name" and argValue = "") or
+    """)
+
+    body_mid = textwrap.dedent("""
+              )
+            ) or
+            (
+              exists(Expr arg, string localArgValue |
+                arg = call.getAnArgument() and
+                (
+                  (arg instanceof StringLiteral and localArgValue = arg.(StringLiteral).getValue().toLowerCase()) or
+                  (arg instanceof FunctionCall and localArgValue = arg.(FunctionCall).getTarget().getName().toLowerCase()) or
+                  (arg instanceof VariableAccess and localArgValue = arg.(VariableAccess).getTarget().getName().toLowerCase())
+                ) and
+                argValue = localArgValue and
+                source = "argument" and
+                (
+                  (matchesConcatenated(localArgValue) and algorithm = "Concatenated" and alternative = "Separate algorithms recommended") or
+    """)
+
+    tail = textwrap.dedent("""
+                )
+              )
+            )
+          )
+select call,
+  "Call to '" + call.getTarget().getName() + "' uses an insecure algorithm via argument '" + argValue.toString() + "Category: " + algorithm  + ". Recommended alternative: " + alternative + "."
+
+    """)
+
+    return (
+        header + "\n" + matches_conc + "\n\n" +
+        body_start + "\n                or ".join(fn_clauses) + "\n" +
+        body_mid + "\n                  or ".join(arg_clauses) + "\n" +
+        tail
+    )
+
+def generate_query_regexp_macro():
+    """
+    Macro: stessa logica di famiglia, su macName in minuscolo, con sha[-_]?N.
+    """
+    mode_tokens = _collect_mode_tokens()
+    concat_group = _concat_group()
+
+    matches_conc = textwrap.dedent(f"""
+        bindingset[s]
+        predicate matchesConcatenated(string s) {{
+          s.regexpMatch(".*(({concat_group})([-_/0-9]*[a-zA-Z]*)*([^a-zA-Z0-9]|[-_/0-9])+({concat_group})([-_/0-9]*[a-zA-Z]*)*).*")
+        }}
+    """).rstrip()
+
+    macro_clauses = []
+    for _cat, sub, tokens, alt in _flatten_algos_families():
+        toks_lower = [t.lower() for t in tokens]
+        expanded = _with_sep_variants(toks_lower)
+        lower_group = "|".join(_escape(v) for v in expanded)
+        p = f'.*((^|[^a-zA-Z0-9]|[0-9][-_])({lower_group})([^a-zA-Z]|$)).*'
+        macro_clauses.append(f'(not matchesConcatenated(macName) and macName.regexpMatch("{p}") and algorithm = "{sub}" and alternative = "{alt}")')
+    for m in mode_tokens:
+        lg = _escape(m)
+        p = f'.*((^|[^a-zA-Z0-9]|[0-9][-_])({lg})([^a-zA-Z]|$)).*'
+        macro_clauses.append(f'(not matchesConcatenated(macName) and macName.regexpMatch("{p}") and algorithm = "{m.upper()}" and alternative = "SAFE")')
+
+    header = textwrap.dedent("""
+        /**
+ * @id cpp/primitives-macro-regexp-analysis
+ * @kind problem
+ * @problem.severity warning
+ * @name Insecure cryptographic algorithm specified by macro
+ * @description Finds an insecure cryptographic algorithm specified as a macro. This query prioritizes the longest matching token to provide the most specific result.
+ * @tags security
+ * cryptography
+         */
+        import cpp
+    """).lstrip()
+
+    body = textwrap.dedent("""
+        from MacroInvocation mi, string macName, string algorithm, string alternative
+        where
+        mi.getLocation().getFile().getAbsolutePath().matches("%/home/jak%") and
+        macName = mi.getMacro().getName().toLowerCase() and
+          (
+            (matchesConcatenated(macName) and algorithm = "Concatenated" and alternative = "Separate algorithms recommended")
+            or
+    """)
+
+    tail = textwrap.dedent("""
+          )
+select mi,
+\n  " Macro '" + mi.getMacro().getName() + "' used for an insecure algorithm." + "Algorithm: " + algorithm + " Recommended alternative: " + alternative + "."
+
+    """)
+
+    return header + "\n" + matches_conc + "\n\n" + body + "\n            or ".join(macro_clauses) + "\n" + tail
+# ======== Fine added features ========
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: python query_maker.py <library_id_1> [<library_id_2> ...]")
@@ -394,7 +640,19 @@ def main():
     print(f"Generated: {filename_macro}")
     print("-" * 60)
 
+    # --- Generate Query REGEXP Calls+Args (family grouped, sha[-_]?N, camelCase) ---
+    q_calls_args = generate_query_regexp_calls_and_args()
+    file_calls_args = os.path.join(OUTPUT_DIR, "query_regexp_calls_and_args.ql")
+    with open(file_calls_args, "w", encoding="utf-8") as f:
+        f.write(q_calls_args)
+    print(f"Generated: {file_calls_args}")
 
+    # --- Generate Query REGEXP Macro (family grouped, sha[-_]?N) ---
+    q_macro_regexp = generate_query_regexp_macro()
+    file_macro_regexp = os.path.join(OUTPUT_DIR, "query_regexp_macro.ql")
+    with open(file_macro_regexp, "w", encoding="utf-8") as f:
+        f.write(q_macro_regexp)
+    print(f"Generated: {file_macro_regexp}")
 
 if __name__ == "__main__":
     main()
