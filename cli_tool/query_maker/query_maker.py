@@ -74,14 +74,14 @@ def generate_query_no_args(conn, library_ids, excl_categories=None, excl_primiti
     placeholders_excl_categories = ','.join('?' * (len(excl_categories) if excl_categories is not None else 0))
     placeholders_excl_primitives = ','.join('?' * (len(excl_primitives) if excl_primitives is not None else 0))
     query = f"""
-    SELECT 
-        p.name as PrimitiveName, 
+    SELECT
+        p.name as PrimitiveName,
         c.name as CategoryName,
         COALESCE(p.comment_alternative, c.comment_alternative_general) AS Alternative
     FROM Primitives p
     JOIN Primitive_categories pc ON p.primitive_id = pc.primitive_id
     JOIN Categories c ON pc.category_id = c.category_id
-    WHERE p.library_id IN ({placeholders_libraries}) AND p.need_arg IS NULL AND 
+    WHERE p.library_id IN ({placeholders_libraries}) AND p.need_arg IS NULL AND
     p.primitive_id NOT IN ({placeholders_excl_primitives}) AND c.category_id NOT IN ({placeholders_excl_categories});
     """
 
@@ -134,7 +134,7 @@ def generate_query_no_args(conn, library_ids, excl_categories=None, excl_primiti
     ])
 
     codeql_query = "\n".join(codeql_lines)
-    
+
     cursor.close()
     conn.close()
 
@@ -143,21 +143,21 @@ def generate_query_no_args(conn, library_ids, excl_categories=None, excl_primiti
 # Return string for isKnownAlgorithm query
 def returnQueryisKnownAlgorithm():
     query_builder = io.StringIO()
-    
+
     query_builder.write('predicate isKnownAlgorithm(string category, string subCategory, string token, string alternative) {\n')
 
     category_clauses = []
-    
+
     # Itera su ogni categoria in ALGOS
     for category, subcategories in ALGOS.items():
-                    
+
         subcategory_clauses = []
         # Itera su ogni sottocategoria
         for subcategory, tokens in subcategories.items():
             # 1. Determina l'alternativa corretta
             # Prova a ottenere l'alternativa specifica per la sottocategoria
             specific_alt = ALTS.get(category, {}).get(subcategory)
-            
+
             # Se l'alternativa specifica non esiste o è "...", usa quella generale
             if not specific_alt or specific_alt == "...":
                 alternative = ALTS_CATS.get(category, "...")
@@ -170,14 +170,14 @@ def returnQueryisKnownAlgorithm():
             else:
                 token_parts = [f'token = "{t}"' for t in tokens]
                 token_condition = f'({" or ".join(token_parts)})'
-            
+
             # 3. Costruisce la clausola completa per la sottocategoria
             subcategory_clause = f'(subCategory = "{subcategory}" and {token_condition} and alternative = "{alternative}")'
             subcategory_clauses.append(subcategory_clause)
-        
+
         # 4. Unisce le clausole delle sottocategorie con "or"
         full_subcategory_block = " or ".join(subcategory_clauses)
-        
+
         # 5. Costruisce il blocco completo per la categoria
         category_clause = f'    (category = "{category}" and\n        ( {full_subcategory_block}\n        )\n    )'
         category_clauses.append(category_clause)
@@ -261,7 +261,7 @@ def generate_query_with_args(conn, library_ids):
 
     if not functions_with_args:
         return "" # Return empty if no functions need arg analysis
-    
+
 
     predicate = returnQueryisKnownAlgorithm()
 
@@ -333,22 +333,25 @@ def generate_query_with_args(conn, library_ids):
 import re
 import textwrap
 
-def _escape(t: str) -> str:
-    return (t).lower()
-
+# Capitalizes only the first character of a string while keeping the rest unchanged.
 def _cap_form(t: str) -> str:
     return t[:1].upper() + t[1:] if t else t
 
 def _with_sep_variants(tokens):
     """
-    Per token che terminano con cifre (es. sha1, sha256, ed25519) produce anche 'base[-_]?digits'.
-    Aggiunge anche 'base[-_]?[0-9]+' se esistono varianti numeriche per quella base.
+    For tokens that end with digits (e.g. sha1, sha256, ed25519) also produces 'base[-_]?digits'.
+    Also adds 'base[-_]?[0-9]+' if there are numeric variants for that base.
     """
     out = []
     bases_with_digits = {}
     for t in tokens:
+        # Detect if the token ends with a digit
+        # ([a-z]+) First capture group: one or more lowercase letters (the "base")
+        # (\d+)  Second capture group: one or more digits (the "digits")
         t = t.lower()
         m = re.fullmatch(r'([a-z]+)(\d+)', t)
+
+        # If the match succeeds, the token ends with digits
         if m:
             base, digits = m.group(1), m.group(2)
             bases_with_digits.setdefault(base, set()).add(digits)
@@ -366,7 +369,24 @@ def _with_sep_variants(tokens):
             dedup.append(v)
     return dedup
 
+
 def _flatten_algos_families():
+    """
+    Returns tuples with this pattern: (cat, sub, tokens, alt)
+    Where
+        cat: category name
+        sub: subcategory name
+        tokens: list of token strings for this algorithm
+        alt: the alternative classification
+    Example:
+    From the JSON categorization we can have a structure like
+    ALGOS["BlockCiphers"]["DES"] = ["des", "3des", "tdes", "des-x", "des3", "desx"]
+    ALTS["BlockCiphers"]["DES"] = "AES-256"
+    BlockCiphers is the categorizaton
+    DES is the subcategorization
+    des, 3des, tdes, des-x, des3, desx are the tokens
+    AES-256 is the alternative
+    """
     for cat, subs in ALGOS.items():
         for sub, tokens in subs.items():
             specific = ALTS.get(cat, {}).get(sub)
@@ -374,34 +394,48 @@ def _flatten_algos_families():
             yield (cat, sub, tokens, alt or "...")
 
 def _collect_mode_tokens():
+    """
+    Extracts all operation modes from the JSON data.
+    Example return value ['ecb', 'ctr', 'cbc', 'cfb', 'ofb', 'xts']
+    """
     modes = OPS.get("ModesofOperation", {})
     return sorted({tok.lower() for toks in modes.values() for tok in toks}, key=lambda s: (-len(s), s))
 
+# Creates a regex group containing all algorithm tokens and modes, separated by |.
 def _concat_group():
     toks = sorted({t.lower() for _c,_s,toks,_a in _flatten_algos_families() for t in toks}, key=lambda s: (-len(s), s))
     modes = _collect_mode_tokens()
-    groups = ["|".join(_escape(t) for t in toks)]
+    groups = ["|".join(toks)]
     if modes:
-        groups.append("|".join(_escape(m) for m in modes))
+        groups.append("|".join(modes))
     return "|".join([g for g in groups if g])
 
 def _family_clause_function_name(subcategory: str, tokens, alt: str):
-    toks_lower = [t.lower() for t in tokens]
+    toks_lower = [t.lower() for t in tokens] # Convert all tokens to lowercase
     expanded = _with_sep_variants(toks_lower)  # include sha[-_]?N e sha[-_]?[0-9]+
-    lower_group = "|".join(_escape(v) for v in expanded)
-    uppers = "|".join((t.upper()) for t in toks_lower)
-    caps   = "|".join((_cap_form(t)) for t in toks_lower)
+    lower_group = "|".join(expanded) # group with all lowercase variants
+    uppers = "|".join((t.upper()) for t in toks_lower) # upper case variants
+    caps   = "|".join((_cap_form(t)) for t in toks_lower) # first letter capitalized
 
+    # before the token/algorithm the following are acceptable for detection:
+    #   No char i.e beginning of the string
+    #   No letter or digits
+    #   Digit followed by dash or underscore
     left_boundary = '(^|[^a-zA-Z0-9]|[0-9][-_])'
+
+    # after the token/algorithm the following are acceptable for detection:
+    #   No char i.e ending of the string
+    #   No letters
     right_boundary = '([^a-zA-Z]|$)'
 
+    # Patterns
     p1 = f'.*{left_boundary}({lower_group}){right_boundary}.*'
     p2 = f'.*{left_boundary}({lower_group})(?=[A-Z]).*'
     p3 = f'.*{left_boundary}({uppers})(?=[a-z]).*'
     p4 = f'.*{left_boundary}({caps})(?=[A-Z]).*'
     p5 = f'.*(?<=[a-z])({uppers}).*'
     p6 = f'.*(?<=[A-Z])({lower_group}).*'
-    p7 = f'.*(?<=[a-z])({caps}).*'
+    p7 = f'.*(?<=[a-z])({caps})(?=[A-Z]|[0-9]|[^a-zA-Z]|$).*'
 
     return (
         f'(not matchesConcatenated(funcName) and ('
@@ -418,7 +452,7 @@ def _family_clause_function_name(subcategory: str, tokens, alt: str):
 def _family_clause_argument(subcategory: str, tokens, alt: str):
     toks_lower = [t.lower() for t in tokens]
     expanded = _with_sep_variants(toks_lower)
-    lower_group = "|".join(_escape(v) for v in expanded)
+    lower_group = "|".join(expanded)
     left_boundary = '(^|[^a-zA-Z0-9]|[0-9][-_])'
     right_boundary = '([^a-zA-Z]|$)'
     p1 = f'.*{left_boundary}({lower_group}){right_boundary}.*'
@@ -448,11 +482,9 @@ def generate_query_regexp_calls_and_args():
         fn_clauses.append(_family_clause_function_name(sub, tokens, alt))
         arg_clauses.append(_family_clause_argument(sub, tokens, alt))
 
-    # Modalità come SAFE
+    # SAFE's
     for m in mode_tokens:
-        # solo minuscole con boundary; non serve camelCase per le mode
-        lg = _escape(m)
-        p = f'.*((^|[^a-zA-Z0-9]|[0-9][-_])({lg})([^a-zA-Z]|$)).*'
+        p = f'.*((^|[^a-zA-Z0-9]|[0-9][-_])({m})([^a-zA-Z]|$)).*'
         fn_clauses.append(f'(not matchesConcatenated(funcName) and funcName.regexpMatch("{p}") and algorithm = "{m.upper()}" and alternative = "SAFE" and source = "function_name" and argValue = "")')
         arg_clauses.append(f'(not matchesConcatenated(localArgValue) and localArgValue.regexpMatch("{p}") and algorithm = "{m.upper()}" and alternative = "SAFE")')
 
@@ -534,12 +566,11 @@ def generate_query_regexp_macro():
     for _cat, sub, tokens, alt in _flatten_algos_families():
         toks_lower = [t.lower() for t in tokens]
         expanded = _with_sep_variants(toks_lower)
-        lower_group = "|".join(_escape(v) for v in expanded)
+        lower_group = "|".join(expanded)
         p = f'.*((^|[^a-zA-Z0-9]|[0-9][-_])({lower_group})([^a-zA-Z]|$)).*'
         macro_clauses.append(f'(not matchesConcatenated(macName) and macName.regexpMatch("{p}") and algorithm = "{sub}" and alternative = "{alt}")')
     for m in mode_tokens:
-        lg = _escape(m)
-        p = f'.*((^|[^a-zA-Z0-9]|[0-9][-_])({lg})([^a-zA-Z]|$)).*'
+        p = f'.*((^|[^a-zA-Z0-9]|[0-9][-_])({m})([^a-zA-Z]|$)).*'
         macro_clauses.append(f'(not matchesConcatenated(macName) and macName.regexpMatch("{p}") and algorithm = "{m.upper()}" and alternative = "SAFE")')
 
     header = textwrap.dedent("""
@@ -607,7 +638,7 @@ def main():
     finally:
         if conn_no_args:
             conn_no_args.close()
-            
+
     # --- Generate Query for Primitives WITH Arguments ---
     conn_with_args = None
     try:
@@ -629,7 +660,7 @@ def main():
     finally:
         if conn_with_args:
             conn_with_args.close()
-            
+
     print("-" * 60)
 
     # --- Generate Query for Macro ---
