@@ -3,6 +3,8 @@ import os
 import sys
 import json
 import io
+import re
+import textwrap
 from collections import defaultdict
 
 
@@ -330,14 +332,12 @@ def generate_query_with_args(conn, library_ids):
     return "\n".join(codeql_lines)
 
 # ======== Added features (family-grouped + sha[-_]?N + digit-relaxed where needed) ========
-import re
-import textwrap
 
 # Capitalizes only the first character of a string while keeping the rest unchanged.
-def _cap_form(t: str) -> str:
+def cap_form(t: str) -> str:
     return t[:1].upper() + t[1:] if t else t
 
-def _with_sep_variants(tokens):
+def with_sep_variants(tokens):
     """
     For tokens that end with digits (e.g. sha1, sha256, ed25519) also produces 'base[-_]?digits'.
     Also adds 'base[-_]?[0-9]+' if there are numeric variants for that base.
@@ -370,7 +370,7 @@ def _with_sep_variants(tokens):
     return dedup
 
 
-def _flatten_algos_families():
+def flatten_algos_families():
     """
     Returns tuples with this pattern: (cat, sub, tokens, alt)
     Where
@@ -393,7 +393,7 @@ def _flatten_algos_families():
             alt = specific if specific and specific != "..." else ALTS_CATS.get(cat, "...")
             yield (cat, sub, tokens, alt or "...")
 
-def _collect_mode_tokens():
+def collect_mode_tokens():
     """
     Extracts all operation modes from the JSON data.
     Example return value ['ecb', 'ctr', 'cbc', 'cfb', 'ofb', 'xts']
@@ -402,20 +402,20 @@ def _collect_mode_tokens():
     return sorted({tok.lower() for toks in modes.values() for tok in toks}, key=lambda s: (-len(s), s))
 
 # Creates a regex group containing all algorithm tokens and modes, separated by |.
-def _concat_group():
-    toks = sorted({t.lower() for _c,_s,toks,_a in _flatten_algos_families() for t in toks}, key=lambda s: (-len(s), s))
-    modes = _collect_mode_tokens()
+def conact_group():
+    toks = sorted({t.lower() for _c,_s,toks,_a in flatten_algos_families() for t in toks}, key=lambda s: (-len(s), s))
+    modes = collect_mode_tokens()
     groups = ["|".join(toks)]
     if modes:
         groups.append("|".join(modes))
     return "|".join([g for g in groups if g])
 
-def _family_clause_function_name(subcategory: str, tokens, alt: str):
+def family_clause_function_name(subcategory: str, tokens, alt: str):
     toks_lower = [t.lower() for t in tokens] # Convert all tokens to lowercase
-    expanded = _with_sep_variants(toks_lower)  # include sha[-_]?N e sha[-_]?[0-9]+
+    expanded = with_sep_variants(toks_lower)  # include sha[-_]?N e sha[-_]?[0-9]+
     lower_group = "|".join(expanded) # group with all lowercase variants
     uppers = "|".join((t.upper()) for t in toks_lower) # upper case variants
-    caps   = "|".join((_cap_form(t)) for t in toks_lower) # first letter capitalized
+    caps   = "|".join((cap_form(t)) for t in toks_lower) # first letter capitalized
 
     # before the token/algorithm the following are acceptable for detection:
     #   No char i.e beginning of the string
@@ -449,9 +449,9 @@ def _family_clause_function_name(subcategory: str, tokens, alt: str):
         f') and algorithm = "{subcategory}" and alternative = "{alt}" and source = "function_name" and argValue = "" )'
     )
 
-def _family_clause_argument(subcategory: str, tokens, alt: str):
+def family_clause_argument(subcategory: str, tokens, alt: str):
     toks_lower = [t.lower() for t in tokens]
-    expanded = _with_sep_variants(toks_lower)
+    expanded = with_sep_variants(toks_lower)
     lower_group = "|".join(expanded)
     left_boundary = '(^|[^a-zA-Z0-9]|[0-9][-_])'
     right_boundary = '([^a-zA-Z]|$)'
@@ -465,8 +465,8 @@ def generate_query_regexp_calls_and_args():
     """
     Versione family-grouped con varianti sha[-_]?N e camelCase come nel primo messaggio.
     """
-    mode_tokens = _collect_mode_tokens()
-    concat_group = _concat_group()
+    mode_tokens = collect_mode_tokens()
+    concat_group = conact_group()
 
     matches_conc = textwrap.dedent(f"""
         // Helper predicate per concatenazioni di token
@@ -478,9 +478,9 @@ def generate_query_regexp_calls_and_args():
 
     fn_clauses = []
     arg_clauses = []
-    for _cat, sub, tokens, alt in _flatten_algos_families():
-        fn_clauses.append(_family_clause_function_name(sub, tokens, alt))
-        arg_clauses.append(_family_clause_argument(sub, tokens, alt))
+    for _cat, sub, tokens, alt in flatten_algos_families():
+        fn_clauses.append(family_clause_function_name(sub, tokens, alt))
+        arg_clauses.append(family_clause_argument(sub, tokens, alt))
 
     # SAFE's
     for m in mode_tokens:
@@ -552,8 +552,8 @@ def generate_query_regexp_macro():
     """
     Macro: stessa logica di famiglia, su macName in minuscolo, con sha[-_]?N.
     """
-    mode_tokens = _collect_mode_tokens()
-    concat_group = _concat_group()
+    mode_tokens = collect_mode_tokens()
+    concat_group = conact_group()
 
     matches_conc = textwrap.dedent(f"""
         bindingset[s]
@@ -563,9 +563,9 @@ def generate_query_regexp_macro():
     """).rstrip()
 
     macro_clauses = []
-    for _cat, sub, tokens, alt in _flatten_algos_families():
+    for _cat, sub, tokens, alt in flatten_algos_families():
         toks_lower = [t.lower() for t in tokens]
-        expanded = _with_sep_variants(toks_lower)
+        expanded = with_sep_variants(toks_lower)
         lower_group = "|".join(expanded)
         p = f'.*((^|[^a-zA-Z0-9]|[0-9][-_])({lower_group})([^a-zA-Z]|$)).*'
         macro_clauses.append(f'(not matchesConcatenated(macName) and macName.regexpMatch("{p}") and algorithm = "{sub}" and alternative = "{alt}")')

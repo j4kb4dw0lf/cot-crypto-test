@@ -1,3 +1,6 @@
+# ============================================================================
+# IMPORTS AND DEPENDENCIES
+# ============================================================================
 import tkinter as tk
 from tkinter import filedialog, ttk, scrolledtext, messagebox, simpledialog
 import os
@@ -9,7 +12,11 @@ import sys
 import inspect
 import sqlite3
 import traceback
+import shutil
 
+# ============================================================================
+# PATH CONFIGURATION AND SETUP
+# ============================================================================
 _gui_script_dir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
 CORE_SCRIPT_DIR = os.path.normpath(os.path.join(_gui_script_dir, 'cli_tool'))
 if _gui_script_dir not in sys.path:
@@ -17,6 +24,9 @@ if _gui_script_dir not in sys.path:
 cli_tool_path = os.path.join(_gui_script_dir, 'cli_tool')
 if cli_tool_path not in sys.path:
     sys.path.insert(0, cli_tool_path)
+# ============================================================================
+# CLI TOOLS IMPORT - Analysis backend functions
+# ============================================================================
 try:
     from cli_tool.query_maker.query_maker import generate_query_no_args, generate_query_with_args, generate_query_macros, generate_query_regexp_calls_and_args, generate_query_regexp_macro
     from cli_tool.environ_detector.environ_detector import scan_project as cli_scan_environment
@@ -40,18 +50,28 @@ except ImportError as e:
     def generate_query_regexp_macro(): raise NotImplementedError("query_maker not found")
     def cli_make_pdf_report(bqrs_path, output_pdf): raise NotImplementedError("report_maker not found")
 
+# ============================================================================
+# GLOBAL PATHS AND DIRECTORIES
+# ============================================================================
 CORE_DB_PATH = os.path.normpath(os.path.join(CORE_SCRIPT_DIR, 'DB', 'crypto_primitives.db'))
 GENERATED_QL_OUTPUT_DIR = os.path.join(CORE_SCRIPT_DIR, 'generated_ql_queries')
 os.makedirs(GENERATED_QL_OUTPUT_DIR, exist_ok=True)
-PROJECT_ROOT_DIR = _gui_script_dir 
+PROJECT_ROOT_DIR = _gui_script_dir
 PROJECT_OUTPUTS_DIR = os.path.join(PROJECT_ROOT_DIR, 'outputs')
 os.makedirs(PROJECT_OUTPUTS_DIR, exist_ok=True)
 
+# ============================================================================
+# DATABASE HELPER FUNCTIONS
+# ============================================================================
 def get_all_libraries(conn):
+    """Retrieve all library IDs and names from the database"""
     cursor = conn.cursor()
     cursor.execute("SELECT library_id, name FROM Libraries ORDER BY library_id")
     return cursor.fetchall()
 
+# ============================================================================
+# GUI ICONS - Base64 encoded images for file tree
+# ============================================================================
 ORIGINAL_FOLDER_ICON_BASE64 = """
 iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAAdgAAAHYBTnsmCAAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAADDSURBVDiNpdIxTsNAEIXhL3YXiTZNyhwiDQ00SOlzAw5CkRNwi3QpMLRYUFJRcYEQFHdBFEgQUxhLK2NgF0YaafVWeu+f0fDPGmCEQ+SB/oSbWJMH1D19HktQ//B/jaqjvWOJVSv0pf/Wu+8InnH6mZJFTHDfJThDmUBSdQ1OEke5CzEfMYnADqsIDS4wSzS4DEeY4yUBf4usJXjVbH6YkH6FfWtQ4jgRv2gfCxxhk4C/xgHNIeWYYhyZ/IZbX0/8b/UBywZkP+3SLOIAAAAASUVORK5CYII=/S5xBEMbxz5yCKGk0XWxtbMTisLNR7FKlSHWQdOlshZAyRVrLEAg2ltr6oxHsxXBiEYj5BwJRSNIoMhZ68hIxuVVyb8AbGHjngXnnu8PuMhuZqU5r1Fr9fwAY/F2IiHG8wFQX+Z8y8929CDLz2jGGE2SBL1b/UepR3YQRMYfnf2Gex0QlPsfTzNy8SwMiM0VEYPaqA3+yxA6W8bKi/8RhQd1jrGAdmvis+5ZvYwS7BTm3+VJgDc8K6OE93qBVkPMEC5iuaF8HsKr8ODbxCN8LcnbxGqcu9xGMcv82lngbQ9jqaHH10UtrYRgfqOcmnMeXTlAHQOPWoA7rA/QB+gAPHuC8boCNOgGO8PbGVNwj28NkZp41cNDj4u3M/JGZZx3hld4NJL8wdmMsj4gZl4+Rx/9w5fv4mJnfqmL0H6d1A1wA7a7l+w0x/NIAAAAASUVORK5CYII=
 """
@@ -59,6 +79,10 @@ ORIGINAL_FILE_ICON_BASE64 = """
 iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAAdgAAAHYBTnsmCAAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAADQSURBVDiNrdJPSkJRHMXxTy+jQMf2NtACmmg7cdIwaA3SoImuokGgU5fg0D24i/6REEHW4HnpIu/nU/DAHdzf5Xw558flX49Y4bfm3OAeJwJ18BOYE2CJKVq5scgAhWbdYobzbUCTWlhgjjbu8od99IBnVZ2kC3ylSynuH50ySjDAS5Ckh3E+qAOM8BEAyu1BHeAdbwGgsw/gCa8B4BrDKNrRl1hggssgTVghLfEM3V3mCHDVZMqVvvIn1gf41huP083gW7WYvir6Lq1UNefwB94DQhY2gk5mAAAAAElFTkSuQmCC/S5xBEMbxz5yCKGk0XWxtbMTisLNR7FKlSHWQdOlshZAyRVrLEAg2ltr6oxHsxXBiEYj5BwJRSNIoMhZ68hIxuVVyb8AbGHjngXnnu8PuMhuZqU5r1Fr9fwAY/F2IiHG8wFQX+Z8y8929CDLz2jGGE2SBL1b/UepR3YQRMYfnf2Gex0QlPsfTzNy8SwMiM0VEYPaqA3+yxA6W8bKi/8RhQd1jrGAdmvis+5ZvYwS7BTm3+VJgDc8K6OE93qBVkPMEC5iuaF8HsKr8ODbxCN8LcnbxGqcu9xGMcv82lngbQ9jqaHH10UtrYRgfqOcmnMeXTlAHQOPWoA7rA/QB+gAPHuC8boCNOgGO8PbGVNwj28NkZp41cNDj4u3M/JGZZx3hld4NJL8wdmMsj4gZl4+Rx/9w5fv4mJnfqmL0H6d1A1wA7a7l+w0x/NIAAAAASUVORK5CYII=
 """
 
+# ============================================================================
+# SYNTAX HIGHLIGHTING CONFIGURATION
+# ============================================================================
+# Keywords for syntax highlighting in code preview
 COMMON_KEYWORDS = {
     'auto', 'break', 'case', 'char', 'const', 'continue', 'default', 'do',
     'double', 'else', 'enum', 'extern', 'float', 'for', 'goto', 'if',
@@ -78,6 +102,7 @@ COMMON_KEYWORDS = {
     'in', 'is', 'lambda', 'nonlocal', 'not', 'or', 'pass', 'raise', 'with', 'yield',
 }
 
+# Regex patterns for different code elements
 SYNTAX_PATTERNS = {
     'comment': r'(//[^\n]*|/\*.*?\*/|#.*)',
     'preprocessor': r'(#\s*\w+)',
@@ -88,6 +113,7 @@ SYNTAX_PATTERNS = {
     'type': r'\b(int|void|char|long|float|double|bool|byte|short|string|String|array|Array|list|List|dict|Dict)\b',
 }
 
+# Color scheme for syntax highlighting
 SYNTAX_COLORS = {
     'comment': 'gray',
     'preprocessor': 'purple',
@@ -99,14 +125,23 @@ SYNTAX_COLORS = {
     'default': 'black'
 }
 
-initial_root_window = None
-folder_icon_tk = None
-file_icon_tk = None
-
+# ============================================================================
+# GLOBAL GUI STATE VARIABLES
+# ============================================================================
 log_queue = queue.Queue()
 current_opened_folder_path = None
+initial_root_window = None
+folder_icon_tk = None  # Folder icon for tree view
+file_icon_tk = None    # File icon for tree view
+csv_load_functions = {}  # Dictionary to store CSV load functions for auto-refresh
+last_analysis_output_dir = None  # Last directory where analysis results were saved
+csv_tabs_dict = {}  # Dictionary to store CSV tab information (tab_name -> (csv_file, text_widget))
 
+# ============================================================================
+# UTILITY FUNCTIONS - Logging and Threading
+# ============================================================================
 def gui_log_message(log_text_widget, message):
+    """Log message - if no log widget, just print to console"""
     if log_text_widget and log_text_widget.winfo_exists():
         log_text_widget.config(state=tk.NORMAL)
         log_text_widget.insert(tk.END, str(message) + "\n")
@@ -134,6 +169,9 @@ def run_in_thread(target_callable, *args, **kwargs):
     thread = threading.Thread(target=threaded_callable, daemon=True)
     thread.start()
 
+# ============================================================================
+# SYNTAX HIGHLIGHTING - Code preview functionality
+# ============================================================================
 def apply_syntax_highlighting(text_widget, content, file_extension):
     text_widget.mark_set("range_start", "1.0")
     text_widget.delete("1.0", tk.END)
@@ -192,6 +230,9 @@ def display_file_content_with_highlighting(item_path, text_preview_area):
     finally:
         text_preview_area.config(state=tk.DISABLED)
 
+# ============================================================================
+# FILE TREE OPERATIONS - Building and navigating the file tree
+# ============================================================================
 def populate_tree(tree, parent_node_id, folder_path, force_refresh=False):
     global folder_icon_tk, file_icon_tk
     if parent_node_id:
@@ -219,13 +260,13 @@ def populate_tree(tree, parent_node_id, folder_path, force_refresh=False):
             item_values_file = (item_full_path, 'file', 'file')
             try:
                 if os.path.isdir(item_full_path):
-                    node_id = tree.insert(parent_node_id, 'end', text=item_name, 
-                                          image=folder_icon_tk if folder_icon_tk else '', 
+                    node_id = tree.insert(parent_node_id, 'end', text=item_name,
+                                          image=folder_icon_tk if folder_icon_tk else '',
                                           values=item_values_dir, open=False)
                     tree.insert(node_id, 'end', text="")
                 elif os.path.isfile(item_full_path):
-                    tree.insert(parent_node_id, 'end', text=item_name, 
-                                image=file_icon_tk if file_icon_tk else '', 
+                    tree.insert(parent_node_id, 'end', text=item_name,
+                                image=file_icon_tk if file_icon_tk else '',
                                 values=item_values_file)
             except tk.TclError as item_insert_e:
                 log_queue.put(f"TclError inserting item '{item_name}' (icon issue?): {item_insert_e}. Attempting without icon.")
@@ -234,7 +275,7 @@ def populate_tree(tree, parent_node_id, folder_path, force_refresh=False):
                     tree.insert(node_id, 'end', text="")
                 elif os.path.isfile(item_full_path):
                     tree.insert(parent_node_id, 'end', text=item_name, values=item_values_file)
-            except Exception as item_e: 
+            except Exception as item_e:
                 log_queue.put(f"General error inserting item '{item_name}': {item_e}")
                 tree.insert(parent_node_id, 'end', text=f"{item_name} (Error)", values=(item_full_path, "error", "error"))
     except OSError as e:
@@ -283,6 +324,595 @@ def on_tree_open(event, tree):
         folder_path = item_values[0]
         populate_tree(tree, selected_item_id, folder_path, force_refresh=False)
 
+def refresh_tree_node(tree, node_id):
+    """Refresh a specific tree node"""
+    if node_id == '':
+        # Get the root folder path from current_opened_folder_path
+        global current_opened_folder_path
+        if current_opened_folder_path:
+            populate_tree(tree, '', current_opened_folder_path, force_refresh=True)
+    else:
+        item_values = tree.item(node_id, 'values')
+        if item_values and len(item_values) >= 1:
+            folder_path = item_values[0]
+            populate_tree(tree, node_id, folder_path, force_refresh=True)
+
+# ============================================================================
+# FILE SYSTEM OPERATIONS - Create, delete, rename files and folders
+# ============================================================================
+def action_create_folder(tree, log_text_widget=None):
+    """Create a new folder in the current directory (from navigation bar path)"""
+    global current_opened_folder_path
+
+    # Use the current path shown in navigation bar
+    parent_path = current_opened_folder_path
+
+    # Ask for folder name
+    folder_name = simpledialog.askstring("Create Folder", "Enter new folder name:", parent=tree.winfo_toplevel())
+    if not folder_name:
+        return
+
+    new_folder_path = os.path.join(parent_path, folder_name)
+
+    try:
+        os.makedirs(new_folder_path, exist_ok=False)
+        print(f"Created folder: {new_folder_path}")
+        # Refresh the root tree
+        refresh_tree_node(tree, '')
+    except FileExistsError:
+        messagebox.showerror("Error", f"Folder '{folder_name}' already exists!")
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to create folder: {e}")
+        print(f"Error creating folder: {e}")
+
+def action_create_file(tree, log_text_widget=None):
+    """Create a new file in the current directory (from navigation bar path)"""
+    global current_opened_folder_path
+
+    # Use the current path shown in navigation bar
+    parent_path = current_opened_folder_path
+
+    # Ask for file name
+    file_name = simpledialog.askstring("Create File", "Enter new file name:", parent=tree.winfo_toplevel())
+    if not file_name:
+        return
+
+    new_file_path = os.path.join(parent_path, file_name)
+
+    try:
+        with open(new_file_path, 'x') as f:
+            f.write("")
+        print(f"Created file: {new_file_path}")
+        # Refresh the root tree
+        refresh_tree_node(tree, '')
+    except FileExistsError:
+        messagebox.showerror("Error", f"File '{file_name}' already exists!")
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to create file: {e}")
+        print(f"Error creating file: {e}")
+
+def action_delete_item(tree, log_text_widget=None):
+    """Delete selected file or folder"""
+    selected_item_id = tree.focus()
+    if not selected_item_id:
+        messagebox.showwarning("No Selection", "Please select a file or folder to delete.")
+        return
+
+    item_values = tree.item(selected_item_id, 'values')
+    if not item_values or len(item_values) < 2:
+        return
+
+    item_path = item_values[0]
+    item_name = os.path.basename(item_path)
+
+    # Confirm deletion
+    confirm = messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete '{item_name}'?", parent=tree.winfo_toplevel())
+    if not confirm:
+        return
+
+    try:
+        if os.path.isdir(item_path):
+            shutil.rmtree(item_path)
+            print(f"Deleted folder: {item_path}")
+        elif os.path.isfile(item_path):
+            os.remove(item_path)
+            print(f"Deleted file: {item_path}")
+
+        # Refresh parent
+        parent_id = tree.parent(selected_item_id)
+        refresh_tree_node(tree, parent_id if parent_id else '')
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to delete: {e}")
+        print(f"Error deleting item: {e}")
+
+def action_rename_item(tree, log_text_widget=None):
+    """Rename selected file or folder"""
+    selected_item_id = tree.focus()
+    if not selected_item_id:
+        messagebox.showwarning("No Selection", "Please select a file or folder to rename.")
+        return
+
+    item_values = tree.item(selected_item_id, 'values')
+    if not item_values or len(item_values) < 2:
+        return
+
+    old_path = item_values[0]
+    old_name = os.path.basename(old_path)
+
+    # Ask for new name
+    new_name = simpledialog.askstring("Rename", f"Enter new name for '{old_name}':", initialvalue=old_name, parent=tree.winfo_toplevel())
+    if not new_name or new_name == old_name:
+        return
+
+    new_path = os.path.join(os.path.dirname(old_path), new_name)
+
+    try:
+        os.rename(old_path, new_path)
+        print(f"Renamed: {old_name} -> {new_name}")
+        # Refresh parent
+        parent_id = tree.parent(selected_item_id)
+        refresh_tree_node(tree, parent_id if parent_id else '')
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to rename: {e}")
+        print(f"Error renaming item: {e}")
+
+def action_open_in_system_explorer(tree):
+    """Open the selected folder in system file explorer"""
+    selected_item_id = tree.focus()
+    if not selected_item_id:
+        return
+
+    item_values = tree.item(selected_item_id, 'values')
+    if not item_values or len(item_values) < 2:
+        return
+
+    path = item_values[0]
+    if os.path.isfile(path):
+        path = os.path.dirname(path)
+
+    try:
+        if sys.platform == "win32":
+            os.startfile(path)
+        elif sys.platform == "darwin":
+            subprocess.call(["open", path])
+        else:
+            subprocess.call(["xdg-open", path])
+    except Exception as e:
+        log_queue.put(f"Error opening in system explorer: {e}")
+
+# ============================================================================
+# CODEQL DATABASE CREATION - Generate CodeQL database for analysis
+# ============================================================================
+def action_create_codeql_database(tree, status_label_widget=None):
+    """Create CodeQL database for the selected folder"""
+    selected_item_id = tree.focus()
+    if not selected_item_id:
+        messagebox.showwarning("No Selection", "Please select a folder to create CodeQL database.")
+        return
+
+    item_values = tree.item(selected_item_id, 'values')
+    if not item_values or len(item_values) < 2:
+        return
+
+    folder_path = item_values[0]
+
+    # Check if it's a folder
+    if not os.path.isdir(folder_path):
+        messagebox.showerror("Error", "Please select a folder.")
+        return
+
+    # Ask if user wants default build options
+    use_default = messagebox.askyesno(
+        "Build Options",
+        "Do you want to use the default build options?",
+        parent=tree.winfo_toplevel()
+    )
+
+    if use_default:
+        # Use default options (no --command flag)
+        build_command = None
+    else:
+        # Ask for build options
+        build_options = simpledialog.askstring(
+            "Build Options",
+            "Enter build options (e.g., make, cmake --build .):",
+            parent=tree.winfo_toplevel()
+        )
+        if not build_options:
+            print("Build options not provided. Operation cancelled.")
+            return
+        build_command = build_options
+
+    # Create DB directory path
+    db_path = os.path.join(folder_path, "DB")
+
+    # Update status
+    if status_label_widget:
+        status_label_widget.config(text="Status: creating database...")
+        status_label_widget.update()
+
+    def create_db_task():
+        try:
+            # Build command
+            cmd = [
+                "codeql", "database", "create",
+                db_path,
+                "--language=c-cpp",
+                f"--source-root={folder_path}",
+                "--overwrite"
+            ]
+
+            if build_command:
+                cmd.append(f"--command={build_command}")
+
+            print(f"Creating CodeQL database at {db_path}...")
+            print(f"Executing: {' '.join(cmd)}")
+            print("-" * 80)
+
+            # Use Popen to stream output in real-time
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,  # Merge stderr to stdout
+                text=True,
+                bufsize=1,  # Line buffered
+                universal_newlines=True
+            )
+
+            # Stream output line by line
+            for line in process.stdout:
+                print(line.rstrip())  # Print without extra newline
+
+            # Wait for process to complete
+            return_code = process.wait()
+
+            print("-" * 80)
+
+            if return_code == 0:
+                print(f"Successfully created CodeQL database at: {db_path}")
+                messagebox.showinfo("Success", f"CodeQL database created successfully at:\n{db_path}", parent=tree.winfo_toplevel())
+            else:
+                print(f"Failed to create CodeQL database. Exit code: {return_code}")
+                messagebox.showerror("Error", f"Failed to create CodeQL database.\nExit code: {return_code}", parent=tree.winfo_toplevel())
+
+        except FileNotFoundError:
+            print("Error: 'codeql' command not found. Please ensure CodeQL CLI is in your PATH.")
+            messagebox.showerror("Error", "'codeql' command not found.\nPlease ensure CodeQL CLI is in your PATH.", parent=tree.winfo_toplevel())
+        except Exception as e:
+            print(f"Error creating CodeQL database: {e}")
+            print(traceback.format_exc())
+            messagebox.showerror("Error", f"Error creating CodeQL database:\n{e}", parent=tree.winfo_toplevel())
+        finally:
+            # Reset status
+            if status_label_widget:
+                status_label_widget.config(text="Status: ready")
+
+    # Run in thread
+    run_in_thread(create_db_task)
+
+# ============================================================================
+# CODEQL ANALYSIS - Analyze database with pre-generated queries
+# ============================================================================
+def action_analyze_codeql_database(tree, status_label_widget=None):
+    """Analyze a CodeQL database using pre-generated queries"""
+    selected_item_id = tree.focus()
+    if not selected_item_id:
+        messagebox.showwarning("No Selection", "Please select a CodeQL database folder to analyze.")
+        return
+
+    item_values = tree.item(selected_item_id, 'values')
+    if not item_values or len(item_values) < 2:
+        return
+
+    selected_path = item_values[0]
+
+    # Verify it's a valid directory
+    if not os.path.isdir(selected_path):
+        messagebox.showerror("Invalid Selection", "Please select a valid directory (CodeQL database folder).")
+        return
+
+    log_queue.put(f"Starting CodeQL analysis on database: {selected_path}")
+
+    # Define all pre-generated query files
+    query_files = [
+        "query_noargs.ql",
+        "query_withargs.ql",
+        "query_macro.ql",
+        "query_regexp_calls_and_args.ql",
+        "query_regexp_macro.ql"
+    ]
+
+    def analysis_task():
+        global last_analysis_output_dir
+        try:
+            if status_label_widget:
+                status_label_widget.config(text=f"Status: Analyzing database...")
+
+            # Save output files in the parent directory of the database
+            output_dir = os.path.dirname(selected_path)
+            last_analysis_output_dir = output_dir  # Store for CSV loading
+            log_queue.put(f"Output directory: {output_dir}")
+
+            successful_queries = 0
+            failed_queries = 0
+
+            for query_file in query_files:
+                query_path = os.path.join(GENERATED_QL_OUTPUT_DIR, query_file)
+
+                if not os.path.exists(query_path):
+                    log_queue.put(f"WARNING: Skipping {query_file} - file not found")
+                    continue
+
+                # Define output paths
+                query_basename = os.path.splitext(query_file)[0]
+                bqrs_path = os.path.join(output_dir, f"{query_basename}.bqrs")
+                csv_path = os.path.join(output_dir, f"{query_basename}.csv")
+
+                print(f"\n{'='*60}")
+                print(f"Running query: {query_file}")
+                print(f"{'='*60}")
+
+                # Step 1: Run CodeQL query
+                cmd_run = [
+                    "codeql", "query", "run",
+                    f"--database={selected_path}",
+                    query_path,
+                    f"--output={bqrs_path}"
+                ]
+
+                print(f"Command: {' '.join(cmd_run)}")
+
+                try:
+                    result = subprocess.run(
+                        cmd_run,
+                        capture_output=True,
+                        text=True,
+                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                    )
+
+                    if result.stdout:
+                        print(f"STDOUT:\n{result.stdout}")
+                    if result.stderr:
+                        print(f"STDERR:\n{result.stderr}")
+
+                    if result.returncode != 0:
+                        print(f"FAILED: Could not run query {query_file}. Exit code: {result.returncode}")
+                        failed_queries += 1
+                        continue
+
+                    print(f"SUCCESS: Query executed successfully: {bqrs_path}")
+
+                    # Step 2: Convert BQRS to CSV
+                    print(f"Converting BQRS to CSV...")
+                    cmd_decode = [
+                        "codeql", "bqrs", "decode",
+                        "--format=csv",
+                        f"--output={csv_path}",
+                        bqrs_path
+                    ]
+
+                    print(f"Command: {' '.join(cmd_decode)}")
+
+                    result_decode = subprocess.run(
+                        cmd_decode,
+                        capture_output=True,
+                        text=True,
+                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                    )
+
+                    if result_decode.stdout:
+                        print(f"STDOUT:\n{result_decode.stdout}")
+                    if result_decode.stderr:
+                        print(f"STDERR:\n{result_decode.stderr}")
+
+                    if result_decode.returncode == 0:
+                        print(f"SUCCESS: CSV generated: {csv_path}")
+                        successful_queries += 1
+                    else:
+                        print(f"WARNING: CSV conversion failed for {query_file}")
+                        successful_queries += 1  # Still count as success since query ran
+
+                except FileNotFoundError:
+                    print(f"ERROR: 'codeql' command not found. Please ensure CodeQL CLI is in your PATH.")
+                    failed_queries += 1
+                    break
+                except Exception as e:
+                    print(f"ERROR: Error processing {query_file}: {e}")
+                    print(traceback.format_exc())
+                    failed_queries += 1
+
+            # Summary
+            print(f"\n{'='*60}")
+            print(f"Analysis Complete!")
+            print(f"{'='*60}")
+            print(f"Successful queries: {successful_queries}/{len(query_files)}")
+            print(f"Results saved to: {output_dir}")
+
+            # Auto-refresh all CSV tabs
+            print(f"\nRefreshing CSV tabs...")
+            for csv_file, load_func in csv_load_functions.items():
+                try:
+                    load_func()
+                    print(f"Refreshed: {csv_file}")
+                except Exception as e:
+                    print(f"Warning: Could not refresh {csv_file}: {e}")
+
+
+        except Exception as e:
+            print(f"Critical error during analysis: {e}")
+            print(traceback.format_exc())
+        finally:
+            if status_label_widget:
+                status_label_widget.config(text="Status: ready")
+
+    run_in_thread(analysis_task)
+
+# ============================================================================
+# SEARCH FUNCTIONALITY - Search within text widgets
+# ============================================================================
+def show_search_dialog(text_widget):
+    """Show search dialog for text widget"""
+    search_window = tk.Toplevel()
+    search_window.title("Find")
+    search_window.geometry("400x100")
+    search_window.resizable(False, False)
+
+    # Search frame
+    search_frame = ttk.Frame(search_window, padding=10)
+    search_frame.pack(fill=tk.BOTH, expand=True)
+
+    # Search entry
+    ttk.Label(search_frame, text="Find:").grid(row=0, column=0, sticky=tk.W, pady=5)
+    search_entry = ttk.Entry(search_frame, width=30)
+    search_entry.grid(row=0, column=1, padx=5, pady=5)
+    search_entry.focus()
+
+    # Status label
+    status_label = ttk.Label(search_frame, text="")
+    status_label.grid(row=1, column=0, columnspan=3, sticky=tk.W)
+
+    # Search state
+    current_index = {"value": "1.0"}
+
+    def do_search(event=None):
+        # Remove previous highlights
+        text_widget.tag_remove("search_highlight", "1.0", tk.END)
+
+        search_text = search_entry.get()
+        if not search_text:
+            status_label.config(text="Please enter search text")
+            return
+
+        # Search from current position
+        start_pos = current_index["value"]
+        pos = text_widget.search(search_text, start_pos, stopindex=tk.END, nocase=True)
+
+        if pos:
+            # Found match
+            end_pos = f"{pos}+{len(search_text)}c"
+            text_widget.tag_add("search_highlight", pos, end_pos)
+            text_widget.tag_config("search_highlight", background="yellow", foreground="black")
+            text_widget.see(pos)
+            current_index["value"] = end_pos
+            status_label.config(text=f"Found at {pos}")
+        else:
+            # No more matches, wrap around
+            current_index["value"] = "1.0"
+            pos = text_widget.search(search_text, "1.0", stopindex=tk.END, nocase=True)
+            if pos:
+                end_pos = f"{pos}+{len(search_text)}c"
+                text_widget.tag_add("search_highlight", pos, end_pos)
+                text_widget.tag_config("search_highlight", background="yellow", foreground="black")
+                text_widget.see(pos)
+                current_index["value"] = end_pos
+                status_label.config(text=f"Wrapped to beginning - Found at {pos}")
+            else:
+                status_label.config(text="Not found")
+
+    def find_next(event=None):
+        do_search()
+
+    # Buttons
+    btn_frame = ttk.Frame(search_frame)
+    btn_frame.grid(row=0, column=2, padx=5)
+
+    ttk.Button(btn_frame, text="Find Next", command=find_next).pack(side=tk.LEFT, padx=2)
+    ttk.Button(btn_frame, text="Close", command=search_window.destroy).pack(side=tk.LEFT, padx=2)
+
+    # Bind Enter key to search
+    search_entry.bind("<Return>", find_next)
+
+    # Bind Escape to close
+    search_window.bind("<Escape>", lambda e: search_window.destroy())
+
+# ============================================================================
+# CSV VIEWING FUNCTIONS - Load CSV from specific directory into tabs
+# ============================================================================
+def action_view_csv_result(tree, tab_name):
+    """View CSV result from the selected directory in the specified tab"""
+    selected_item = tree.selection()
+    if not selected_item:
+        log_queue.put("Please select a folder.")
+        return
+
+    selected_path = tree.set(selected_item[0], 'fullpath')
+
+    # Get the CSV file and text widget for this tab
+    if tab_name not in csv_tabs_dict:
+        log_queue.put(f"Tab '{tab_name}' not found.")
+        return
+
+    csv_file, text_widget = csv_tabs_dict[tab_name]
+
+    # If the selected path is a file, use its parent directory
+    if os.path.isfile(selected_path):
+        csv_dir = os.path.dirname(selected_path)
+    else:
+        csv_dir = selected_path
+
+    csv_path = os.path.join(csv_dir, csv_file)
+
+    # Load the CSV
+    text_widget.delete(1.0, tk.END)
+
+    if os.path.exists(csv_path):
+        try:
+            with open(csv_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+                text_widget.insert(tk.END, content)
+            text_widget.insert(1.0, f"File: {csv_path}\n{'='*80}\n\n")
+            log_queue.put(f"Loaded {csv_file} from {csv_dir}")
+        except Exception as e:
+            text_widget.insert(tk.END, f"Error loading CSV file:\n{e}")
+            log_queue.put(f"Error loading {csv_file}: {e}")
+    else:
+        text_widget.insert(tk.END, f"CSV file not found: {csv_path}\n\n")
+        text_widget.insert(tk.END, f"Make sure the analysis has been run for this database.")
+        log_queue.put(f"CSV file not found: {csv_path}")
+
+# ============================================================================
+# CONTEXT MENU - Right-click menu for file operations
+# ============================================================================
+def show_context_menu(event, tree, log_text_widget=None, status_label=None):
+    """Show right-click context menu"""
+    # Select the item under cursor
+    item_id = tree.identify_row(event.y)
+    if item_id:
+        tree.selection_set(item_id)
+        tree.focus(item_id)
+
+    # Create context menu
+    context_menu = tk.Menu(tree, tearoff=0)
+    context_menu.add_command(label="Create New Folder", command=lambda: action_create_folder(tree, log_text_widget))
+    context_menu.add_command(label="Create New File", command=lambda: action_create_file(tree, log_text_widget))
+    context_menu.add_separator()
+    context_menu.add_command(label="Create CodeQL Database", command=lambda: action_create_codeql_database(tree, status_label))
+    context_menu.add_command(label="Analyze CodeQL Database", command=lambda: action_analyze_codeql_database(tree, status_label))
+
+    # Add "View csv result" submenu
+    view_csv_menu = tk.Menu(context_menu, tearoff=0)
+    view_csv_menu.add_command(label="View as Macro result", command=lambda: action_view_csv_result(tree, "Macro"))
+    view_csv_menu.add_command(label="View as No args result", command=lambda: action_view_csv_result(tree, "No args analysis"))
+    view_csv_menu.add_command(label="View as Args result", command=lambda: action_view_csv_result(tree, "Args analysis"))
+    view_csv_menu.add_command(label="View as Regexp calls and args result", command=lambda: action_view_csv_result(tree, "Regexp calls and args"))
+    view_csv_menu.add_command(label="View as Regexp macro result", command=lambda: action_view_csv_result(tree, "Regexp macro"))
+    context_menu.add_cascade(label="View csv result", menu=view_csv_menu)
+
+    context_menu.add_separator()
+    context_menu.add_command(label="Rename", command=lambda: action_rename_item(tree, log_text_widget))
+    context_menu.add_command(label="Delete", command=lambda: action_delete_item(tree, log_text_widget))
+    context_menu.add_separator()
+    context_menu.add_command(label="Refresh", command=lambda: refresh_tree_node(tree, item_id if item_id else ''))
+    context_menu.add_command(label="Open in System Explorer", command=lambda: action_open_in_system_explorer(tree))
+
+    try:
+        context_menu.tk_popup(event.x_root, event.y_root)
+    finally:
+        context_menu.grab_release()
+
+# ============================================================================
+# ANALYSIS ACTIONS - Main analysis functions (Scan, Update, Generate)
+# ============================================================================
 def action_scan_environment():
     global current_opened_folder_path
     if not cli_dependencies_found: log_queue.put("Action 'Scan Environment' disabled: CLI dependencies not found."); return
@@ -319,44 +949,8 @@ def action_scan_project_codeql(root_window):
     if not project_context_path:
         log_queue.put("No folder context for project scan. Please open a folder first.")
         return
-    conn_db = None
-    library_ids = []
-    try:
-        conn_db = sqlite3.connect(CORE_DB_PATH)
-        all_libraries = get_all_libraries(conn_db)
-        library_prompt = "Enter Library IDs (comma-separated, or 'any' for all):\n"
-        if all_libraries:
-            for lib_id, lib_name in all_libraries:
-                library_prompt += f"  ID: {lib_id}, Name: {lib_name}\n"
-        else:
-            library_prompt += "No libraries found in the database.\n"
-        library_ids_str = simpledialog.askstring("Library IDs", library_prompt, parent=root_window)
-        if not library_ids_str:
-            log_queue.put("Library IDs not provided. Scan cancelled."); return
-        if library_ids_str.lower().strip() == 'any':
-            log_queue.put("Input 'any' detected. Fetching all library IDs from the database.")
-            if not all_libraries:
-                log_queue.put("No libraries found in the database to scan. Scan cancelled.")
-                return
-            library_ids = [lib_id for lib_id, _ in all_libraries]
-        else:
-            try:
-                library_ids = [int(lid.strip()) for lid in library_ids_str.split(',') if lid.strip()]
-            except ValueError:
-                log_queue.put("Error: Invalid Library ID format. Please enter comma-separated integers or 'any'. Scan cancelled."); return
-            if not library_ids:
-                log_queue.put("No valid Library IDs entered. Scan cancelled."); return
-    except sqlite3.Error as e:
-        log_queue.put(f"Error accessing database for library list: {e}")
-        log_queue.put(traceback.format_exc())
-        return
-    except Exception as e:
-        log_queue.put(f"Error during library ID input: {e}")
-        log_queue.put(traceback.format_exc())
-        return
-    finally:
-        if conn_db:
-            conn_db.close()
+
+    # Ask for CodeQL database path
     suggested_db_path = os.path.join(project_context_path, "codeql-db")
     codeql_db_path = filedialog.askdirectory(
         title=f"Select CodeQL DB for '{os.path.basename(project_context_path)}'",
@@ -365,98 +959,73 @@ def action_scan_project_codeql(root_window):
     )
     if not codeql_db_path:
         log_queue.put("CodeQL database path not provided. Scan cancelled."); return
-    log_queue.put(f"Starting CodeQL scan for library IDs: {', '.join(map(str, library_ids))} (Project: {project_context_path}) using DB: {codeql_db_path}")
+
+    log_queue.put(f"Starting CodeQL scan for library IDs 1-7 (Project: {project_context_path}) using DB: {codeql_db_path}")
     def task():
-        conn_task = None
         try:
-            conn_task = sqlite3.connect(CORE_DB_PATH)
-            query_noargs = generate_query_no_args(conn_task, library_ids)
-            conn_task = sqlite3.connect(CORE_DB_PATH)
-            query_withargs = generate_query_with_args(conn_task, library_ids)
-            query_macro = generate_query_macros()
-            conn_task = sqlite3.connect(CORE_DB_PATH)
-            query_regexp_calls_and_args = generate_query_regexp_calls_and_args()
-            query_regexp_macro = generate_query_regexp_macro()
-
-            if not query_noargs:
-                log_queue.put("No QL file generated. Nothing to scan."); return
-
-            if not query_withargs:
-                log_queue.put("No QL file with arguments generated. Using no-args query only.")
-
-            if not query_macro:
-                log_queue.put("No QL macro file generated.")
-
-            if not query_regexp_calls_and_args:
-                log_queue.put("No QL regexp calls and args file generated.")
-            
-            if not query_regexp_macro:
-                log_queue.put("No QL regexp macro file generated.")
-            
-            os.makedirs(GENERATED_QL_OUTPUT_DIR, exist_ok=True) 
+            # Use pre-generated query files (all 5 queries)
             filename1 = os.path.join(GENERATED_QL_OUTPUT_DIR, "query_noargs.ql")
             filename2 = os.path.join(GENERATED_QL_OUTPUT_DIR, "query_withargs.ql")
             filename3 = os.path.join(GENERATED_QL_OUTPUT_DIR, "query_macro.ql")
             filename4 = os.path.join(GENERATED_QL_OUTPUT_DIR, "query_regexp_calls_and_args.ql")
             filename5 = os.path.join(GENERATED_QL_OUTPUT_DIR, "query_regexp_macro.ql")
 
-            with open(filename1, 'w') as f:
-                f.write(query_noargs)
-            log_queue.put(f"Generated {filename1}")
+            # Verify that the pre-generated queries exist
+            if not os.path.exists(filename1):
+                log_queue.put(f"Error: Pre-generated query file not found: {filename1}"); return
+            if not os.path.exists(filename2):
+                log_queue.put(f"Error: Pre-generated query file not found: {filename2}"); return
+            if not os.path.exists(filename3):
+                log_queue.put(f"Error: Pre-generated query file not found: {filename3}"); return
+            if not os.path.exists(filename4):
+                log_queue.put(f"Error: Pre-generated query file not found: {filename4}"); return
+            if not os.path.exists(filename5):
+                log_queue.put(f"Error: Pre-generated query file not found: {filename5}"); return
 
-            with open(filename2, 'w') as f:
-                f.write(query_withargs)
-            log_queue.put(f"Generated {filename2}")
-
-            with open(filename3, 'w') as f:
-                f.write(query_macro)
-            log_queue.put(f"Generated {filename3}")
-
-            with open(filename4, 'w') as f:
-                f.write(query_regexp_calls_and_args)
-            log_queue.put(f"Generated {filename4}")
-
-            with open(filename5, 'w') as f:
-                f.write(query_regexp_macro)
-            log_queue.put(f"Generated {filename5}")
+            log_queue.put("Using pre-generated query files:")
+            log_queue.put(f"  - {os.path.basename(filename1)}")
+            log_queue.put(f"  - {os.path.basename(filename2)}")
+            log_queue.put(f"  - {os.path.basename(filename3)}")
+            log_queue.put(f"  - {os.path.basename(filename4)}")
+            log_queue.put(f"  - {os.path.basename(filename5)}")
 
 
-          
+
             os.makedirs(PROJECT_OUTPUTS_DIR, exist_ok=True)
             bqrs_output_file_noargs = os.path.join(PROJECT_OUTPUTS_DIR, 'problem_primitives-noargs-analysis.bqrs')
-            brqs_output_file_withargs = os.path.join(PROJECT_OUTPUTS_DIR, 'problem_primitives-withargs-analysis.bqrs')
+            bqrs_output_file_withargs = os.path.join(PROJECT_OUTPUTS_DIR, 'problem_primitives-withargs-analysis.bqrs')
             brqs_output_file_macro = os.path.join(PROJECT_OUTPUTS_DIR, 'problem_primitives-macro-analysis.bqrs')
             brqs_output_file_regexp_calls_and_args = os.path.join(PROJECT_OUTPUTS_DIR, 'problem_primitives-regexp-calls-and-args-analysis.bqrs')
             brqs_output_file_regexp_macro = os.path.join(PROJECT_OUTPUTS_DIR, 'problem_primitives-regexp-macro-analysis.bqrs')
-            log_queue.put(f"Running CodeQL queries, output to: {bqrs_output_file_noargs, brqs_output_file_withargs, brqs_output_file_macro, brqs_output_file_regexp_calls_and_args, brqs_output_file_regexp_macro}")
-            
-           
-            log_queue.put(f"Running CodeQL query: {os.path.basename(filename1)}, {os.path.basename(filename2)} and {os.path.basename(filename3)} and {os.path.basename(filename4)} and {os.path.basename(filename5)}")    
-            
-             # NO ARGS CODEQL COMMAND
+            log_queue.put(f"Running CodeQL queries, output to:")
+            log_queue.put(f"  - {bqrs_output_file_noargs}")
+            log_queue.put(f"  - {bqrs_output_file_withargs}")
+            log_queue.put(f"  - {brqs_output_file_macro}")
+            log_queue.put(f"  - {brqs_output_file_regexp_calls_and_args}")
+            log_queue.put(f"  - {brqs_output_file_regexp_macro}")
+
+            # NO ARGS CODEQL COMMAND
             cmd = [
-                "codeql", "query", "run", 
-                f"--database={codeql_db_path}", 
-                filename1, 
-                f"--output={bqrs_output_file_noargs}", 
+                "codeql", "query", "run",
+                f"--database={codeql_db_path}",
+                filename1,
+                f"--output={bqrs_output_file_noargs}",
             ]
             log_queue.put(f"Executing: {' '.join(cmd)}")
-
             result = subprocess.run(cmd, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
             if result.stdout: log_queue.put(f"CodeQL STDOUT:\n{result.stdout}")
             if result.stderr: log_queue.put(f"CodeQL STDERR:\n{result.stderr}")
             if result.returncode == 0:
                 log_queue.put(f"Successfully ran query: {os.path.basename(filename1)}")
             else:
-                log_queue.put(f"Failed to run query: {os.path.basename(filename1)}. Exit code: {result.returncode}")         
-            
+                log_queue.put(f"Failed to run query: {os.path.basename(filename1)}. Exit code: {result.returncode}")
 
             # WITH ARGS CODEQL COMMAND
             cmd = [
-                "codeql", "query", "run", 
-                f"--database={codeql_db_path}", 
-                filename2, 
-                f"--output={brqs_output_file_withargs}", 
+                "codeql", "query", "run",
+                f"--database={codeql_db_path}",
+                filename2,
+                f"--output={bqrs_output_file_withargs}",
             ]
             log_queue.put(f"Executing: {' '.join(cmd)}")
             result = subprocess.run(cmd, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
@@ -469,10 +1038,10 @@ def action_scan_project_codeql(root_window):
 
             # MACRO CODEQL COMMAND
             cmd = [
-                "codeql", "query", "run", 
-                f"--database={codeql_db_path}", 
-                filename3, 
-                f"--output={brqs_output_file_macro}", 
+                "codeql", "query", "run",
+                f"--database={codeql_db_path}",
+                filename3,
+                f"--output={brqs_output_file_macro}",
             ]
             log_queue.put(f"Executing: {' '.join(cmd)}")
             result = subprocess.run(cmd, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
@@ -485,10 +1054,10 @@ def action_scan_project_codeql(root_window):
 
             # REGEXP CALLS AND ARGS CODEQL COMMAND
             cmd = [
-                "codeql", "query", "run", 
-                f"--database={codeql_db_path}", 
-                filename4, 
-                f"--output={brqs_output_file_regexp_calls_and_args}", 
+                "codeql", "query", "run",
+                f"--database={codeql_db_path}",
+                filename4,
+                f"--output={brqs_output_file_regexp_calls_and_args}",
             ]
             log_queue.put(f"Executing: {' '.join(cmd)}")
             result = subprocess.run(cmd, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
@@ -497,14 +1066,14 @@ def action_scan_project_codeql(root_window):
             if result.returncode == 0:
                 log_queue.put(f"Successfully ran query: {os.path.basename(filename4)}")
             else:
-                log_queue.put(f"Failed to run query: {os.path.basename(filename4)}. Exit code: {result.returncode}")    
-            
+                log_queue.put(f"Failed to run query: {os.path.basename(filename4)}. Exit code: {result.returncode}")
+
             # REGEXP MACRO CODEQL COMMAND
             cmd = [
-                "codeql", "query", "run", 
-                f"--database={codeql_db_path}", 
-                filename5, 
-                f"--output={brqs_output_file_regexp_macro}", 
+                "codeql", "query", "run",
+                f"--database={codeql_db_path}",
+                filename5,
+                f"--output={brqs_output_file_regexp_macro}",
             ]
             log_queue.put(f"Executing: {' '.join(cmd)}")
             result = subprocess.run(cmd, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
@@ -513,16 +1082,13 @@ def action_scan_project_codeql(root_window):
             if result.returncode == 0:
                 log_queue.put(f"Successfully ran query: {os.path.basename(filename5)}")
             else:
-                log_queue.put(f"Failed to run query: {os.path.basename(filename5)}. Exit code: {result.returncode}")    
+                log_queue.put(f"Failed to run query: {os.path.basename(filename5)}. Exit code: {result.returncode}")
 
         except FileNotFoundError:
             log_queue.put("Error: 'codeql' command not found. Please ensure CodeQL CLI is in your PATH.")
         except Exception as e:
             log_queue.put(f"Error during CodeQL project scan: {e}")
             log_queue.put(traceback.format_exc())
-        finally:
-            if conn_task:
-                conn_task.close()
     run_in_thread(task)
 
 def action_generate_report(root_window):
@@ -586,27 +1152,77 @@ def action_generate_report(root_window):
                 log_queue.put(f"Could not open output directory automatically: {e_open}")
     run_in_thread(task_batch_report)
 
+# ============================================================================
+# MAIN GUI WINDOW CREATION
+# ============================================================================
 def create_file_explorer_window(folder_path_to_explore, root_window_to_destroy):
+    """
+    Creates the main application window with:
+    - Top: Navigation bar with workspace path
+    - Action buttons bar
+    - Middle: Split view with file tree (left) and preview pane (right)
+    - Bottom: Status bar
+    """
+    print(f"Creating file explorer window for: {folder_path_to_explore}")
     global initial_root_window, folder_icon_tk, file_icon_tk, current_opened_folder_path
     current_opened_folder_path = folder_path_to_explore
+
+    # Destroy previous window if exists
     if root_window_to_destroy:
         root_window_to_destroy.destroy()
+
+    # ========================================================================
+    # WINDOW SETUP - Main window configuration
+    # ========================================================================
+    print("Creating Tk window...")
     explorer_root = tk.Tk()
     explorer_root.title(f"File Explorer & Analyzer - {os.path.basename(folder_path_to_explore)}")
     explorer_root.geometry("1000x800")
+    print("Tk window created")
+
+    # Apply theme
     style = ttk.Style(explorer_root)
     try:
         style.theme_use('clam')
     except tk.TclError:
         print("'clam' theme not available, using default.")
+
+    # Load custom icons for file tree
     try:
         folder_icon_tk = tk.PhotoImage(master=explorer_root, data=ORIGINAL_FOLDER_ICON_BASE64)
         file_icon_tk = tk.PhotoImage(master=explorer_root, data=ORIGINAL_FILE_ICON_BASE64)
         print("Successfully loaded custom icons from base64.")
-    except tk.TclError as e: 
+    except tk.TclError as e:
         print(f"Error loading custom icons from base64: {e}. Icons will be missing or default.")
         folder_icon_tk = None
         file_icon_tk = None
+
+    # ========================================================================
+    # NAVIGATION BAR (TOP) - Workspace path display and folder selection
+    # ========================================================================
+    nav_frame = ttk.Frame(explorer_root)
+    nav_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
+
+    def choose_workspace():
+        global current_opened_folder_path
+        new_folder = filedialog.askdirectory(
+            title="Choose Workspace Folder",
+            initialdir=current_opened_folder_path,
+            parent=explorer_root
+        )
+        if new_folder:
+            current_opened_folder_path = new_folder
+            path_label.config(text=f"Path: {new_folder}")
+            explorer_root.title(f"File Explorer & Analyzer - {os.path.basename(new_folder)}")
+            populate_tree(file_tree, '', new_folder, force_refresh=True)
+
+    ttk.Button(nav_frame, text="Choose Workspace", command=choose_workspace).pack(side=tk.LEFT, padx=(0, 5))
+    path_label = ttk.Label(nav_frame, text=f"Path: {folder_path_to_explore}", relief="sunken", anchor='w')
+    path_label.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+
+    # ========================================================================
+    # ACTION BUTTONS BAR - Analysis and CodeQL operations
+    # ========================================================================
     actions_buttons_frame = ttk.Labelframe(explorer_root, text="Analysis Actions", padding=10)
     actions_buttons_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
     btn_scan_env = ttk.Button(actions_buttons_frame, text="Scan Environment", command=action_scan_environment)
@@ -617,10 +1233,18 @@ def create_file_explorer_window(folder_path_to_explore, root_window_to_destroy):
     btn_scan_project.pack(side=tk.LEFT, padx=5, pady=5)
     btn_report = ttk.Button(actions_buttons_frame, text="Generate PDF Report", command=lambda: action_generate_report(explorer_root))
     btn_report.pack(side=tk.LEFT, padx=5, pady=5)
+
+    # ========================================================================
+    # MAIN LAYOUT - Vertical and horizontal paned windows
+    # ========================================================================
     main_v_pane = ttk.PanedWindow(explorer_root, orient=tk.VERTICAL)
     main_v_pane.pack(fill=tk.BOTH, expand=True, padx=5, pady=(0,5))
     explorer_h_pane = ttk.PanedWindow(main_v_pane, orient=tk.HORIZONTAL)
     main_v_pane.add(explorer_h_pane, weight=3)
+
+    # ========================================================================
+    # LEFT PANE - File tree navigation
+    # ========================================================================
     left_frame = ttk.Frame(explorer_h_pane, width=300)
     explorer_h_pane.add(left_frame, weight=1)
     tree_scrollbar_y = ttk.Scrollbar(left_frame, orient=tk.VERTICAL)
@@ -633,71 +1257,205 @@ def create_file_explorer_window(folder_path_to_explore, root_window_to_destroy):
     file_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
     file_tree['columns'] = ("fullpath", "type", "status")
     file_tree.column("#0", width=250, minwidth=200, anchor='w')
-    file_tree.heading("#0", text="Name", anchor='w')
+    file_tree.heading("#0", text="Workspace", anchor='w')
     for col in ("fullpath", "type", "status"):
         file_tree.column(col, width=0, stretch=tk.NO)
+
+    # ========================================================================
+    # RIGHT PANE - CSV Results Tabbed View
+    # ========================================================================
     right_frame = ttk.Frame(explorer_h_pane)
     explorer_h_pane.add(right_frame, weight=3)
-    text_preview_area = scrolledtext.ScrolledText(right_frame, wrap=tk.WORD, state=tk.DISABLED, font=("Consolas", 10), relief="solid", borderwidth=1)
-    text_preview_area.pack(fill=tk.BOTH, expand=True, padx=(0,5), pady=(0,5))
-    text_preview_area.config(state=tk.NORMAL)
-    text_preview_area.delete(1.0, tk.END)
-    text_preview_area.insert(tk.END, "Double-click a file for preview. Select an item for context actions.")
-    text_preview_area.config(state=tk.DISABLED)
-    populate_tree(file_tree, '', folder_path_to_explore) 
-    file_tree.bind("<<TreeviewSelect>>", lambda e: on_tree_select_changed(e, file_tree, text_preview_area))
-    file_tree.bind("<Double-1>", lambda e: on_tree_double_click(e, file_tree, text_preview_area))
+
+    # Create tabbed notebook for CSV results
+    csv_notebook = ttk.Notebook(right_frame)
+    csv_notebook.pack(fill=tk.BOTH, expand=True, padx=(0,5), pady=(0,5))
+
+    # Define tabs and their corresponding CSV files
+    csv_tabs = {
+        "Macro": ("query_macro.csv", None),
+        "No args analysis": ("query_noargs.csv", None),
+        "Args analysis": ("query_withargs.csv", None),
+        "Regexp calls and args": ("query_regexp_calls_and_args.csv", None),
+        "Regexp macro": ("query_regexp_macro.csv", None)
+    }
+
+    # Create tabs with scrolled text areas
+    for tab_name, (csv_file, _) in csv_tabs.items():
+        tab_frame = ttk.Frame(csv_notebook)
+        csv_notebook.add(tab_frame, text=tab_name)
+
+        # Text area for CSV content
+        csv_text_area = scrolledtext.ScrolledText(
+            tab_frame,
+            wrap=tk.NONE,
+            font=("Consolas", 9)
+        )
+        csv_text_area.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # Make text area read-only but searchable
+        def make_readonly(event):
+            # Allow Ctrl+C, Ctrl+A, and navigation keys
+            if event.state & 0x4:  # Ctrl key
+                if event.keysym in ('c', 'a', 'f', 'C', 'A', 'F'):
+                    return
+            # Allow arrow keys, home, end, page up/down
+            if event.keysym in ('Up', 'Down', 'Left', 'Right', 'Home', 'End', 'Prior', 'Next'):
+                return
+            return "break"
+
+        csv_text_area.bind("<Key>", make_readonly)
+
+        # Bind Ctrl+F to open search dialog
+        csv_text_area.bind("<Control-f>", lambda e, tw=csv_text_area: show_search_dialog(tw))
+
+        # Store reference to text area
+        csv_tabs[tab_name] = (csv_file, csv_text_area)
+        csv_tabs_dict[tab_name] = (csv_file, csv_text_area)
+
+        # Function to load CSV for this specific tab
+        def make_load_csv(csv_filename, text_widget):
+            def load_csv():
+                text_widget.delete(1.0, tk.END)
+
+                if not last_analysis_output_dir:
+                    text_widget.insert(tk.END, "No analysis has been run yet.\n\n")
+                    text_widget.insert(tk.END, "Right-click a CodeQL database and select 'Analyze CodeQL Database'.")
+                    return
+
+                csv_path = os.path.join(last_analysis_output_dir, csv_filename)
+
+                if os.path.exists(csv_path):
+                    try:
+                        with open(csv_path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                            text_widget.insert(tk.END, content)
+                        text_widget.insert(1.0, f"File: {csv_path}\n{'='*80}\n\n")
+                    except Exception as e:
+                        text_widget.insert(tk.END, f"Error loading CSV file:\n{e}")
+                else:
+                    text_widget.insert(tk.END, f"CSV file not found: {csv_path}\n\n")
+                    text_widget.insert(tk.END, f"The analysis may have failed to generate this file.")
+            return load_csv
+
+        # Store the load function globally for auto-refresh after analysis
+        load_func = make_load_csv(csv_file, csv_text_area)
+        csv_load_functions[csv_file] = load_func
+
+        # Tabs start empty and will be automatically populated after analysis
+
+    # Populate the file tree with initial data
+    print("Populating file tree...")
+    populate_tree(file_tree, '', folder_path_to_explore)
+    print("File tree populated")
+
+    # ========================================================================
+    # EVENT BINDINGS - File tree interactions
+    # ========================================================================
     file_tree.bind("<<TreeviewOpen>>", lambda e: on_tree_open(e, file_tree))
-    log_display_frame = ttk.Labelframe(main_v_pane, text="Log Output", height=150, padding=10)
-    main_v_pane.add(log_display_frame, weight=1)
-    log_text_widget = scrolledtext.ScrolledText(log_display_frame, wrap=tk.WORD, state=tk.DISABLED, font=("Consolas", 9))
-    log_text_widget.pack(fill=tk.BOTH, expand=True)
-    process_log_queue(log_text_widget)
+
+    # ========================================================================
+    # STATUS BAR (BOTTOM) - Application status display
+    # ========================================================================
+    status_frame = ttk.Frame(explorer_root)
+    status_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=5)
+    status_label = ttk.Label(status_frame, text="Status: ready", relief="sunken", anchor='w')
+    status_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+    # ========================================================================
+    # CONTEXT MENU BINDINGS - Right-click menu
+    # ========================================================================
+    file_tree.bind("<Button-3>", lambda e: show_context_menu(e, file_tree, None, status_label))  # Right-click (Linux/Windows)
+    file_tree.bind("<Button-2>", lambda e: show_context_menu(e, file_tree, None, status_label))  # Right-click (Mac)
+
+    # ========================================================================
+    # FINALIZATION - Disable buttons if CLI tools unavailable
+    # ========================================================================
     if not cli_dependencies_found:
-        gui_log_message(log_text_widget, "Warning: CLI tool dependencies could not be imported. Analysis actions are disabled.")
+        print("Warning: CLI tool dependencies could not be imported. Analysis actions are disabled.")
         for btn in [btn_scan_env, btn_update_db, btn_scan_project, btn_report]:
             btn.config(state=tk.DISABLED)
     else:
-        gui_log_message(log_text_widget, "CLI Analyzer Ready. Select an action.")
+        print("CLI Analyzer Ready. Select an action.")
+
+    # Start the main event loop
+    print("Starting main event loop...")
     explorer_root.protocol("WM_DELETE_WINDOW", lambda: on_explorer_close(explorer_root))
     explorer_root.mainloop()
+    print("Main loop exited")
 
+# ============================================================================
+# WINDOW LIFECYCLE
+# ============================================================================
 def on_explorer_close(root):
+    """Handle window close event"""
     print("Explorer window closed.")
     root.destroy()
 
-def select_folder_and_proceed():
-    global initial_root_window
-    folder_path = filedialog.askdirectory(parent=initial_root_window)
-    if folder_path:
-        create_file_explorer_window(folder_path, initial_root_window)
-    else:
-        print("No folder selected.")
-
+# ============================================================================
+# APPLICATION ENTRY POINT
+# ============================================================================
 def main_initial_window():
-    global initial_root_window
-    initial_root_window = tk.Tk()
-    initial_root_window.title("Folder Analyzer Tool - Step 1")
-    style = ttk.Style(initial_root_window)
-    try:
-        style.theme_use('clam')
-    except tk.TclError:
-        pass
-    window_width = 400
-    window_height = 200
-    screen_width = initial_root_window.winfo_screenwidth()
-    screen_height = initial_root_window.winfo_screenheight()
-    center_x = int(screen_width / 2 - window_width / 2)
-    center_y = int(screen_height / 2 - window_height / 2)
-    initial_root_window.geometry(f'{window_width}x{window_height}+{center_x}+{center_y}')
-    initial_root_window.focus_force()
-    content_frame = ttk.Frame(initial_root_window, padding="20")
-    content_frame.pack(expand=True, fill=tk.BOTH)
-    label = ttk.Label(content_frame, text="Select a folder to explore and analyze.")
-    label.pack(pady=10)
-    select_button = ttk.Button(content_frame, text="Select Folder", command=select_folder_and_proceed)
-    select_button.pack(pady=10)
-    initial_root_window.mainloop()
+    """Main entry point - Pre-generates queries and launches GUI"""
+    if cli_dependencies_found:
+        try:
+            # Define library IDs to use (1 to 7)
+            library_ids = [1, 2, 3, 4, 5, 6, 7]
+            print(f"Pre-generating queries for library IDs: {library_ids}")
 
+            # Generate all 5 queries (create separate connections for each)
+            conn1 = sqlite3.connect(CORE_DB_PATH)
+            query_noargs_cached = generate_query_no_args(conn1, library_ids)
+            conn1.close()
+
+            conn2 = sqlite3.connect(CORE_DB_PATH)
+            query_withargs_cached = generate_query_with_args(conn2, library_ids)
+            conn2.close()
+
+            query_macro_cached = generate_query_macros()
+            query_regexp_calls_cached = generate_query_regexp_calls_and_args()
+            query_regexp_macro_cached = generate_query_regexp_macro()
+
+            # Write them to files immediately
+            if query_noargs_cached:
+                with open(os.path.join(GENERATED_QL_OUTPUT_DIR, "query_noargs.ql"), 'w') as f:
+                    f.write(query_noargs_cached)
+                print("Generated query_noargs.ql")
+
+            if query_withargs_cached:
+                with open(os.path.join(GENERATED_QL_OUTPUT_DIR, "query_withargs.ql"), 'w') as f:
+                    f.write(query_withargs_cached)
+                print("Generated query_withargs.ql")
+
+            if query_macro_cached:
+                with open(os.path.join(GENERATED_QL_OUTPUT_DIR, "query_macro.ql"), 'w') as f:
+                    f.write(query_macro_cached)
+                print("Generated query_macro.ql")
+
+            if query_regexp_calls_cached:
+                with open(os.path.join(GENERATED_QL_OUTPUT_DIR, "query_regexp_calls_and_args.ql"), 'w') as f:
+                    f.write(query_regexp_calls_cached)
+                print("Generated query_regexp_calls_and_args.ql")
+
+            if query_regexp_macro_cached:
+                with open(os.path.join(GENERATED_QL_OUTPUT_DIR, "query_regexp_macro.ql"), 'w') as f:
+                    f.write(query_regexp_macro_cached)
+                print("Generated query_regexp_macro.ql")
+
+        except Exception as e:
+            print(f"Warning: Failed to generate queries: {e}")
+            print(traceback.format_exc())
+
+    # Launch the main GUI window
+    print("Launching GUI...")
+    workspace_path = os.path.expanduser("~/Exp")
+    if not os.path.exists(workspace_path):
+        print(f"Warning: Default workspace path '{workspace_path}' does not exist. Using home directory instead.")
+        workspace_path = os.path.expanduser("~")
+    create_file_explorer_window(workspace_path, None)
+
+# ============================================================================
+# SCRIPT EXECUTION
+# ============================================================================
 if __name__ == "__main__":
     main_initial_window()
