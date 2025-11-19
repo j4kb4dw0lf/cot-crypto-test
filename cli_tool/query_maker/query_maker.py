@@ -197,8 +197,6 @@ def generate_query_macros():
     codeql_lines = [
         "/**",
         " * @id cpp/primitives-macro-analysis",
-        " * @kind problem",
-        " * @problem.severity warning",
         " * @name Insecure cryptographic algorithm specified by macro",
         " * @description Finds an insecure cryptographic algorithm specified as a macro. This query prioritizes the longest matching token to provide the most specific result.",
         " * @tags security",
@@ -235,11 +233,12 @@ def generate_query_macros():
       "where",
       "  longestTokenInMacro(mi, token) and",
       "  isKnownAlgorithm(category, subCategory, token, alternative)",
-      "select mi,",
-      "  \"\\n Macro '\" + mi.getMacro().getName() + \"' used for an insecure algorithm.\" +",
-      "  \"\\n Category: \" + category +",
-      "  \"\\n Subcategory: \" + subCategory +",
-      "  \"\\n Recommended alternative: \" + alternative + \".\""
+      "select",
+      "  mi.getMacro().getName() as vulnContent,",
+      "  category,",
+      "  subCategory,",
+      "  alternative,",
+      "  mi.getLocation() as line"
     ])
 
 
