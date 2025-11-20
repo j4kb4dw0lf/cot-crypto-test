@@ -93,12 +93,9 @@ def generate_query_no_args(conn, library_ids, excl_categories=None, excl_primiti
     rows = cursor.fetchall()
 
     # Start building the CodeQL content
-
     codeql_lines = [
         "/**",
         "* @id cpp/primitives-noargs-analysis",
-        "* @kind problem",
-        "* @problem.severity warning",
         "* @name Crypto primitive",
         "* @description Find cryptographic primitives",
         "*",
@@ -132,7 +129,12 @@ def generate_query_no_args(conn, library_ids, excl_categories=None, excl_primiti
     codeql_lines.extend([
         "from Function f, string name, string category, string alternative",
         'where name = f.getName() and getCategory(name, category, alternative) and not f.getLocation().getFile().getAbsolutePath().matches("%include%")',
-        'select f,  "\\nFunction name: "+ name + "\\n" + "Category: " +  category + "\\n" + "Alternative: " + alternative'
+        'select',
+        '  name as vulnContent,',
+        '  category,',
+        '  "" as subCategory,',
+        '  alternative,',
+        '  f.getLocation() as line'
     ])
 
     codeql_query = "\n".join(codeql_lines)
@@ -269,8 +271,6 @@ def generate_query_with_args(conn, library_ids):
     codeql_lines = [
         "/**",
         " * @id cpp/primitives-withargs-analysis",
-        " * @kind problem",
-        " * @problem.severity warning",
         " * @name Insecure cryptographic algorithm specified by argument",
         " * @description Finds function calls that use an insecure cryptographic algorithm specified as an argument. This can be a string, a macro, or a call to a function whose name indicates the algorithm (e.g., OpenSSL's EVP_aes_256_cbc()). This query prioritizes the longest matching token to provide the most specific result.",
         " * @tags security",
@@ -322,9 +322,12 @@ def generate_query_with_args(conn, library_ids):
         "  argValue = call.getArgument(n) and",
         "  longestTokenInArg(argValue, token) and",
         "  isKnownAlgorithm(category, subCategory, token, alternative)",
-        "select call,",
-        "  \"Call to '\" + functionName + \"' uses an insecure algorithm via argument '\" + argValue.toString() + \"'.  at postion \" + n.toString() + \". Detected token: '\" + token + \"'. \" +",
-        "  \"Category: \" + category + \". Subcategory: \" + subCategory + \". Recommended alternative: \" + alternative + \".\""
+        "select",
+        "  argValue.toString() as vulnContent,",
+        "  category,",
+        '  "",',
+        "  alternative,",
+        "  call.getLocation() as line"
     ])
 
 
@@ -445,7 +448,7 @@ def family_clause_function_name(subcategory: str, tokens, alt: str):
         f' or originalFuncName.regexpMatch("{p5}")'
         f' or originalFuncName.regexpMatch("{p6}")'
         f' or originalFuncName.regexpMatch("{p7}")'
-        f') and algorithm = "{subcategory}" and alternative = "{alt}" and source = "function_name" and argValue = "" )'
+        f') and algorithm = "{subcategory}" and alternative = "{alt}" and source = "function_name" and argValue = "" and vulnContent = f.getName() )'
     )
 
 def family_clause_argument(subcategory: str, tokens, alt: str):
@@ -457,7 +460,7 @@ def family_clause_argument(subcategory: str, tokens, alt: str):
     p1 = f'.*{left_boundary}({lower_group}){right_boundary}.*'
     return (
         f'(not matchesConcatenated(localArgValue) and localArgValue.regexpMatch("{p1}") '
-        f'and algorithm = "{subcategory}" and alternative = "{alt}" and source = "function_name" and argValue = "" )'
+        f'and algorithm = "{subcategory}" and alternative = "{alt}" and source = "argument" and argValue = localArgValue and vulnContent = localArgValue )'
     )
 
 def generate_query_regexp_calls_and_args():
@@ -484,14 +487,12 @@ def generate_query_regexp_calls_and_args():
     # SAFE's
     for m in mode_tokens:
         p = f'.*((^|[^a-zA-Z0-9]|[0-9][-_])({m})([^a-zA-Z]|$)).*'
-        fn_clauses.append(f'(not matchesConcatenated(funcName) and funcName.regexpMatch("{p}") and algorithm = "{m.upper()}" and alternative = "SAFE" and source = "function_name" and argValue = "")')
-        arg_clauses.append(f'(not matchesConcatenated(localArgValue) and localArgValue.regexpMatch("{p}") and algorithm = "{m.upper()}" and alternative = "SAFE")')
+        fn_clauses.append(f'(not matchesConcatenated(funcName) and funcName.regexpMatch("{p}") and algorithm = "{m.upper()}" and alternative = "SAFE" and source = "function_name" and argValue = "" and vulnContent = f.getName())')
+        arg_clauses.append(f'(not matchesConcatenated(localArgValue) and localArgValue.regexpMatch("{p}") and algorithm = "{m.upper()}" and alternative = "SAFE" and source = "argument" and argValue = localArgValue and vulnContent = localArgValue)')
 
     header = textwrap.dedent("""
         /**
  * @id cpp/primitives-functions-regexp-analysis
- * @kind problem
- * @problem.severity warning
  * @name Insecure cryptographic algorithm specified by macro
  * @description Finds an insecure cryptographic algorithm specified as a macro. This query prioritizes the longest matching token to provide the most specific result.
  * @tags security
@@ -501,7 +502,7 @@ def generate_query_regexp_calls_and_args():
     """).lstrip()
 
     body_start = textwrap.dedent("""
-        from FunctionCall call, Function f, string algorithm, string alternative, string source, string argValue
+        from FunctionCall call, Function f, string algorithm, string alternative, string source, string argValue, string vulnContent
         where
         call.getLocation().getFile().getAbsolutePath().matches("%/home%") and
           f = call.getTarget() and
@@ -510,7 +511,7 @@ def generate_query_regexp_calls_and_args():
               exists(string funcName, string originalFuncName |
                 funcName = f.getName().toLowerCase() and
                 originalFuncName = f.getName() |
-                (matchesConcatenated(funcName) and algorithm = "Concatenated" and alternative = "Separate algorithms recommended" and source = "function_name" and argValue = "") or
+                (matchesConcatenated(funcName) and algorithm = "Concatenated" and alternative = "Separate algorithms recommended" and source = "function_name" and argValue = "" and vulnContent = f.getName()) or
     """)
 
     body_mid = textwrap.dedent("""
@@ -526,6 +527,7 @@ def generate_query_regexp_calls_and_args():
                 ) and
                 argValue = localArgValue and
                 source = "argument" and
+                vulnContent = localArgValue and
                 (
                   (matchesConcatenated(localArgValue) and algorithm = "Concatenated" and alternative = "Separate algorithms recommended") or
     """)
@@ -535,8 +537,12 @@ def generate_query_regexp_calls_and_args():
               )
             )
           )
-select call,
-  "Call to '" + call.getTarget().getName() + "' uses an insecure algorithm via argument '" + argValue.toString() + "Category: " + algorithm  + ". Recommended alternative: " + alternative + "."
+select
+  vulnContent,
+  algorithm as category,
+  "" as subCategory,
+  alternative,
+  call.getLocation() as line
 
     """)
 
@@ -575,8 +581,6 @@ def generate_query_regexp_macro():
     header = textwrap.dedent("""
         /**
  * @id cpp/primitives-macro-regexp-analysis
- * @kind problem
- * @problem.severity warning
  * @name Insecure cryptographic algorithm specified by macro
  * @description Finds an insecure cryptographic algorithm specified as a macro. This query prioritizes the longest matching token to provide the most specific result.
  * @tags security
@@ -597,10 +601,14 @@ def generate_query_regexp_macro():
 
     tail = textwrap.dedent("""
           )
-select mi,
-\n  " Macro '" + mi.getMacro().getName() + "' used for an insecure algorithm." + "Algorithm: " + algorithm + " Recommended alternative: " + alternative + "."
+    select
+      mi.getMacro().getName() as vulnContent,
+      algorithm as category,
+      "" as subCategory,
+      alternative,
+      mi.getLocation() as line
 
-    """)
+        """)
 
     return header + "\n" + matches_conc + "\n\n" + body + "\n            or ".join(macro_clauses) + "\n" + tail
 # ======== Fine added features ========
