@@ -152,41 +152,67 @@ def returnQueryisKnownAlgorithm():
 
     category_clauses = []
 
-    # Itera su ogni categoria in ALGOS
+    # Iterate over each category in ALGOS
     for category, subcategories in ALGOS.items():
 
         subcategory_clauses = []
-        # Itera su ogni sottocategoria
-        for subcategory, tokens in subcategories.items():
-            # 1. Determina l'alternativa corretta
-            # Prova a ottenere l'alternativa specifica per la sottocategoria
-            specific_alt = ALTS.get(category, {}).get(subcategory)
+        # Iterate over each subcategory
+        for subcategory, value in subcategories.items():
+            # Handle both 2-level and 3-level nesting
+            if isinstance(value, dict):
+                # 3-level nesting: iterate over nested subcategories
+                for nested_sub, tokens in value.items():
+                    # Get alternative from nested structure
+                    specific_alt = ALTS.get(category, {}).get(subcategory, {}).get(nested_sub)
 
-            # Se l'alternativa specifica non esiste o è "...", usa quella generale
-            if not specific_alt or specific_alt == "...":
-                alternative = ALTS_CATS.get(category, "...")
+                    # If specific alternative doesn't exist or is "...", use the general one
+                    if not specific_alt or specific_alt == "...":
+                        alternative = ALTS_CATS.get(category, "...")
+                    else:
+                        alternative = specific_alt
+
+                    # Build the condition for tokens
+                    if len(tokens) == 1:
+                        token_condition = f'token = "{tokens[0]}"'
+                    else:
+                        token_parts = [f'token = "{t}"' for t in tokens]
+                        token_condition = f'({" or ".join(token_parts)})'
+
+                    # Build the complete clause for the subcategory
+                    subcategory_clause = f'(subCategory = "{nested_sub}" and {token_condition} and alternative = "{alternative}")'
+                    subcategory_clauses.append(subcategory_clause)
             else:
-                alternative = specific_alt
+                # 2-level nesting: value is the token list
+                tokens = value
+                # Determine the correct alternative
+                # Try to get the specific alternative for the subcategory
+                specific_alt = ALTS.get(category, {}).get(subcategory)
 
-            # 2. Costruisce la condizione per i token
-            if len(tokens) == 1:
-                token_condition = f'token = "{tokens[0]}"'
-            else:
-                token_parts = [f'token = "{t}"' for t in tokens]
-                token_condition = f'({" or ".join(token_parts)})'
+                # If specific alternative doesn't exist or is "...", use the general one
+                if not specific_alt or specific_alt == "...":
+                    alternative = ALTS_CATS.get(category, "...")
+                else:
+                    alternative = specific_alt
 
-            # 3. Costruisce la clausola completa per la sottocategoria
-            subcategory_clause = f'(subCategory = "{subcategory}" and {token_condition} and alternative = "{alternative}")'
-            subcategory_clauses.append(subcategory_clause)
+                # Build the condition for tokens
+                if len(tokens) == 1:
+                    token_condition = f'token = "{tokens[0]}"'
+                else:
+                    token_parts = [f'token = "{t}"' for t in tokens]
+                    token_condition = f'({" or ".join(token_parts)})'
 
-        # 4. Unisce le clausole delle sottocategorie con "or"
+                # Build the complete clause for the subcategory
+                subcategory_clause = f'(subCategory = "{subcategory}" and {token_condition} and alternative = "{alternative}")'
+                subcategory_clauses.append(subcategory_clause)
+
+        # Join the subcategory clauses with "or"
         full_subcategory_block = " or ".join(subcategory_clauses)
 
-        # 5. Costruisce il blocco completo per la categoria
+        # Build the complete block for the category
         category_clause = f'    (category = "{category}" and\n        ( {full_subcategory_block}\n        )\n    )'
         category_clauses.append(category_clause)
 
-    # 6. Unisce i blocchi delle categorie con "or"
+    # Join the category blocks with "or"
     query_builder.write(" or ".join(category_clauses))
     query_builder.write("\n}\n")
     res = query_builder.getvalue()
@@ -342,7 +368,8 @@ def cap_form(t: str) -> str:
 def with_sep_variants(tokens):
     """
     For tokens that end with digits (e.g. sha1, sha256, ed25519) also produces 'base[-_]?digits'.
-    Also adds 'base[-_]?[0-9]+' if there are numeric variants for that base.
+    Also adds 'base[-_]?[0-9]+' for bases where variants exist, EXCEPT for bases where
+    different numbers represent completely different algorithms (not variants).
     """
     out = []
     bases_with_digits = {}
@@ -361,8 +388,14 @@ def with_sep_variants(tokens):
             out.append(f"{base}[-_]?{digits}")
         else:
             out.append(t)
+
+    # Blacklist: bases where numbers represent DIFFERENT algorithms, not variants
+    # (e.g., SM2, SM3, SM4 are different algorithms; not like SHA-256, SHA-384, SHA-512 which are variants)
+    NO_WILDCARD_BASES = {'sm'}  # SM2/SM3/SM4 are different algorithms
+
     for base in bases_with_digits.keys():
-        out.append(f"{base}[-_]?[0-9]+")
+        if base not in NO_WILDCARD_BASES:
+            out.append(f"{base}[-_]?[0-9]+")
     # dedup
     seen, dedup = set(), []
     for v in out:
@@ -390,10 +423,21 @@ def flatten_algos_families():
     AES-256 is the alternative
     """
     for cat, subs in ALGOS.items():
-        for sub, tokens in subs.items():
-            specific = ALTS.get(cat, {}).get(sub)
-            alt = specific if specific and specific != "..." else ALTS_CATS.get(cat, "...")
-            yield (cat, sub, tokens, alt or "...")
+        for sub, value in subs.items():
+            # Check if value is a dict (3-level nesting) or list (2-level nesting)
+            if isinstance(value, dict):
+                # 3-level nesting: iterate over nested subcategories
+                for nested_sub, tokens in value.items():
+                    # Get alternative from nested structure
+                    specific = ALTS.get(cat, {}).get(sub, {}).get(nested_sub)
+                    alt = specific if specific and specific != "..." else ALTS_CATS.get(cat, "...")
+                    yield (cat, nested_sub, tokens, alt or "...")
+            else:
+                # 2-level nesting: value is the token list
+                tokens = value
+                specific = ALTS.get(cat, {}).get(sub)
+                alt = specific if specific and specific != "..." else ALTS_CATS.get(cat, "...")
+                yield (cat, sub, tokens, alt or "...")
 
 def collect_mode_tokens():
     """
@@ -465,13 +509,13 @@ def family_clause_argument(subcategory: str, tokens, alt: str):
 
 def generate_query_regexp_calls_and_args():
     """
-    Versione family-grouped con varianti sha[-_]?N e camelCase come nel primo messaggio.
+    Family-grouped version with sha[-_]?N variants and camelCase support.
     """
     mode_tokens = collect_mode_tokens()
     concat_group = conact_group()
 
     matches_conc = textwrap.dedent(f"""
-        // Helper predicate per concatenazioni di token
+        // Helper predicate for token concatenations
         bindingset[s]
         predicate matchesConcatenated(string s) {{
           s.regexpMatch(".*(({concat_group})([-_/0-9]*[a-zA-Z]*)*([^a-zA-Z0-9]|[-_/0-9])+({concat_group})([-_/0-9]*[a-zA-Z]*)*).*")
@@ -555,7 +599,7 @@ select
 
 def generate_query_regexp_macro():
     """
-    Macro: stessa logica di famiglia, su macName in minuscolo, con sha[-_]?N.
+    Macro: same family logic, on lowercase macName, with sha[-_]?N support.
     """
     mode_tokens = collect_mode_tokens()
     concat_group = conact_group()
