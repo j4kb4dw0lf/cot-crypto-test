@@ -13,7 +13,9 @@
         "IDEA": ["idea"],
         "SEED": ["seed"],
         "MARS": ["mars"],
-        "RC2": ["rc2"]
+        "RC2": ["rc2"],
+        "RC5": ["rc5"],
+        "RC6": ["rc6"]
     },
     "StreamCiphers": {
         "ChaCha": ["chacha", "chacha20", "chacha20poly1305", "xchacha20", "chachapoly", "xchacha20poly1305"],
@@ -30,13 +32,13 @@
         "OCB": ["ocb"]
     },
     "HashingAlgorithms": {
-        "SHA-general": ["sha"],
         "SHA-1": ["sha1"],
         "SHA-2": ["sha2", "sha224", "sha256", "sha384", "sha512"],
         "SHA-3": ["sha3", "sha3", "sha3", "sha3"],
         "MD": ["md2", "md4", "md5"],
         "BLAKE2": ["blake2b", "blake2s"],
         "BLAKE3": ["blake3"],
+        "SHA-general": ["sha"],
         "SM3": ["sm3"],
         "RIPEMD": ["ripemd160", "ripemd"],
         "Whirlpool": ["whirlpool"],
@@ -58,7 +60,8 @@
             "ECIES": ["ecies"],
             "DH": ["dh"],
             "ECDH": ["ecdh"],
-            "Curve25519": ["curve25519", "x25519"]
+            "Curve25519": ["curve25519", "x25519"],
+            "Curve448": ["curve448", "x448"]
         }
     },
     "DigitalSignatures": {
@@ -77,7 +80,7 @@
         "BIKE": ["bike"],
         "HQC": ["hqc"]
     },
-    "DigitalSignaturesPQC": { 
+    "DigitalSignaturesPQC": {
         "Crystals-Dilithium": ["crystals-dilithium", "dilithium"],
         "Falcon": ["falcon"],
         "SPHINCS+": ["sphincs+", "sphincs"],
@@ -148,7 +151,9 @@
         "IDEA": "...",
         "SEED": "...",
         "MARS": "...",
-        "RC2": "AES-256"
+        "RC2": "AES-256",
+        "RC5": "AES-256",
+        "RC6": "AES-256"
     },
     "StreamCiphers": {
         "ChaCha": "chacha20",
@@ -165,13 +170,13 @@
         "OCB": "SAFE"
     },
     "HashingAlgorithms": {
-        "SHA-general": "SHA-3-512",
         "SHA-1": "SHA-2-512",
         "SHA-2": "SHA-2-512",
         "SHA-3": "SHA-3-512",
         "MD": "SHAKE-256",
         "BLAKE2": "SHAKE-256",
         "BLAKE3": "SHAKE-256",
+        "SHA-general": "SHA-3-512",
         "SM3": "SAFE",
         "RIPEMD": "...",
         "Whirlpool": "...",
@@ -189,11 +194,12 @@
     },
     "PublicKeyCryptography": {
     "Encryption & Key Exchange": {
-        "RSA": "ML-KEM-1024", 
+        "RSA": "ML-KEM-1024",
         "ECIES": "ML-KEM-1024",
         "DH": "ML-KEM-1024",
         "ECDH": "ML-KEM-1024",
-        "Curve25519": "ML-KEM-1024"
+        "Curve25519": "ML-KEM-1024",
+        "Curve448": "ML-KEM-1024"
     }
     },
     "DigitalSignatures": {
@@ -229,7 +235,7 @@
     "AEAD": "SAFE",
     "HashingAlgorithms": "SHA-3-512 & SHA-2-512 & SHAKE-256",
     "MACs": "HMAC-SHA-2 & CMAC-AES",
-    "PublicKeyCryptography": "ML-KEM-1024", 
+    "PublicKeyCryptography": "ML-KEM-1024",
     "DigitalSignatures": "ML-DSA-87",
     "KEMs": "SAFE",
     "DigitalSignaturesPQC": "SAFE"

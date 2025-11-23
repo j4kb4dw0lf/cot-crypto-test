@@ -390,8 +390,10 @@ def with_sep_variants(tokens):
             out.append(t)
 
     # Blacklist: bases where numbers represent DIFFERENT algorithms, not variants
-    # (e.g., SM2, SM3, SM4 are different algorithms; not like SHA-256, SHA-384, SHA-512 which are variants)
-    NO_WILDCARD_BASES = {'sm'}  # SM2/SM3/SM4 are different algorithms
+    # (e.g., SM2, SM3, SM4 are different algorithms; SHA-1, SHA-2, SHA-3 are different families
+    # RC to be precise with RC2/5/6 despite having same alternative
+    # Same thing for X25519, X448 and Curve25519, Curve448.
+    NO_WILDCARD_BASES = {'sm', 'sha', 'rc', 'x', 'curve'}
 
     for base in bases_with_digits.keys():
         if base not in NO_WILDCARD_BASES:
@@ -474,6 +476,11 @@ def family_clause_function_name(subcategory: str, tokens, alt: str):
     #   No letters
     right_boundary = '([^a-zA-Z]|$)'
 
+    # Special case: "sha" alone should not match when followed by digits.
+    # To permit categorization to specific families (e.g SHA-2) instead of SHA-general
+    if tokens == ['sha']:
+        right_boundary = '([^a-zA-Z0-9]|$)'
+
     # Patterns
     p1 = f'.*{left_boundary}({lower_group}){right_boundary}.*'
     p2 = f'.*{left_boundary}({lower_group})(?=[A-Z]).*'
@@ -501,6 +508,12 @@ def family_clause_argument(subcategory: str, tokens, alt: str):
     lower_group = "|".join(expanded)
     left_boundary = '(^|[^a-zA-Z0-9]|[0-9][-_])'
     right_boundary = '([^a-zA-Z]|$)'
+
+    # Special case: "sha" alone should not match when followed by digits.
+    # To permit categorization to specific families (e.g SHA-2) instead of SHA-general
+    if tokens == ['sha']:
+        right_boundary = '([^a-zA-Z0-9]|$)'
+
     p1 = f'.*{left_boundary}({lower_group}){right_boundary}.*'
     return (
         f'(not matchesConcatenated(localArgValue) and localArgValue.regexpMatch("{p1}") '
@@ -616,7 +629,14 @@ def generate_query_regexp_macro():
         toks_lower = [t.lower() for t in tokens]
         expanded = with_sep_variants(toks_lower)
         lower_group = "|".join(expanded)
-        p = f'.*((^|[^a-zA-Z0-9]|[0-9][-_])({lower_group})([^a-zA-Z]|$)).*'
+
+        # Special case: "sha" alone should not match when followed by digits
+        # To permit categorization to specific families (e.g SHA-2) instead of SHA-general
+        right_bound = '([^a-zA-Z]|$)'
+        if tokens == ['sha']:
+            right_bound = '([^a-zA-Z0-9]|$)'
+
+        p = f'.*((^|[^a-zA-Z0-9]|[0-9][-_])({lower_group}){right_bound}).*'
         macro_clauses.append(f'(not matchesConcatenated(macName) and macName.regexpMatch("{p}") and algorithm = "{sub}" and alternative = "{alt}")')
     for m in mode_tokens:
         p = f'.*((^|[^a-zA-Z0-9]|[0-9][-_])({m})([^a-zA-Z]|$)).*'
