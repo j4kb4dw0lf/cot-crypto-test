@@ -574,7 +574,7 @@ def generate_query_regexp_calls_and_args():
               exists(string funcName, string originalFuncName |
                 funcName = f.getName().toLowerCase() and
                 originalFuncName = f.getName() |
-                (matchesConcatenated(funcName) and algorithm = "Concatenated" and alternative = "Separate algorithms recommended" and source = "function_name" and argValue = "" and vulnContent = f.getName()) or
+                (matchesConcatenated(funcName) and algorithm = "Concatenated" and alternative = "Different algorithms recommended" and source = "function_name" and argValue = "" and vulnContent = f.getName()) or
     """)
 
     body_mid = textwrap.dedent("""
@@ -592,7 +592,7 @@ def generate_query_regexp_calls_and_args():
                 source = "argument" and
                 vulnContent = localArgValue and
                 (
-                  (matchesConcatenated(localArgValue) and algorithm = "Concatenated" and alternative = "Separate algorithms recommended") or
+                  (matchesConcatenated(localArgValue) and algorithm = "Concatenated" and alternative = "Different algorithms recommended") or
     """)
 
     tail = textwrap.dedent("""
@@ -665,7 +665,7 @@ def generate_query_regexp_macro():
         mi.getLocation().getFile().getAbsolutePath().matches("%/home%") and
         macName = mi.getMacro().getName().toLowerCase() and
           (
-            (matchesConcatenated(macName) and algorithm = "Concatenated" and alternative = "Separate algorithms recommended")
+            (matchesConcatenated(macName) and algorithm = "Concatenated" and alternative = "Different algorithms recommended")
             or
     """)
 

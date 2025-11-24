@@ -56,7 +56,6 @@
     },
     "PublicKeyCryptography": {
         "Encryption & Key Exchange": {
-            "RSA": ["rsa"],
             "ECIES": ["ecies"],
             "DH": ["dh"],
             "ECDH": ["ecdh"],
@@ -65,11 +64,13 @@
         }
     },
     "DigitalSignatures": {
-        "RSA": ["rsa"],
         "DSA": ["dsa"],
         "ECDSA": ["ecdsa", "ecdsap256", "ecdsap384", "ecdsap521"],
         "EdDSA": ["eddsa", "ed25519", "ed448", "sc25519"],
         "SM2": ["sm2"]
+    },
+    "DigitalSignaturesOrKeyExchange": {
+        "RSA": ["rsa"]
     },
     "KEMs": {
         "Crystals-Kyber": ["crystals-kyber", "kyber"],
@@ -194,7 +195,6 @@
     },
     "PublicKeyCryptography": {
     "Encryption & Key Exchange": {
-        "RSA": "ML-KEM-1024",
         "ECIES": "ML-KEM-1024",
         "DH": "ML-KEM-1024",
         "ECDH": "ML-KEM-1024",
@@ -203,11 +203,13 @@
     }
     },
     "DigitalSignatures": {
-        "RSA": "ML-DSA-87",
         "DSA": "ML-DSA-87",
         "ECDSA": "ML-DSA-87",
         "EdDSA": "ML-DSA-87",
         "SM2": "ML-DSA-87"
+    },
+    "DigitalSignaturesOrKeyExchange": {
+        "RSA": "ML-DSA-87 for Digital Signatures and ML-KEM-1024 for Key Exchange"
     },
     "KEMs": {
         "Crystals-Kyber": "SAFE",
@@ -237,6 +239,7 @@
     "MACs": "HMAC-SHA-2 & CMAC-AES",
     "PublicKeyCryptography": "ML-KEM-1024",
     "DigitalSignatures": "ML-DSA-87",
+    "DigitalSignaturesOrKeyExchange": "ML-DSA-87 & ML-KEM-1024",
     "KEMs": "SAFE",
     "DigitalSignaturesPQC": "SAFE"
 }
