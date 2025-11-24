@@ -533,6 +533,12 @@ def generate_query_regexp_calls_and_args():
         predicate matchesConcatenated(string s) {{
           s.regexpMatch(".*(({concat_group})([-_/0-9]*[a-zA-Z]*)*([^a-zA-Z0-9]|[-_/0-9])+({concat_group})([-_/0-9]*[a-zA-Z]*)*).*")
         }}
+
+        // Helper predicate to detect file paths
+        bindingset[s]
+        predicate isFilePath(string s) {{
+          s.regexpMatch(".*\\\\.(c|h|cpp|hpp|cc|hh|cxx|hxx)$") or s.regexpMatch(".*/.*")
+        }}
     """).rstrip()
 
     fn_clauses = []
@@ -578,7 +584,7 @@ def generate_query_regexp_calls_and_args():
               exists(Expr arg, string localArgValue |
                 arg = call.getAnArgument() and
                 (
-                  (arg instanceof StringLiteral and localArgValue = arg.(StringLiteral).getValue().toLowerCase()) or
+                  (arg instanceof StringLiteral and localArgValue = arg.(StringLiteral).getValue().toLowerCase() and not isFilePath(localArgValue)) or
                   (arg instanceof FunctionCall and localArgValue = arg.(FunctionCall).getTarget().getName().toLowerCase()) or
                   (arg instanceof VariableAccess and localArgValue = arg.(VariableAccess).getTarget().getName().toLowerCase())
                 ) and
