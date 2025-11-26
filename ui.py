@@ -80,51 +80,7 @@ ORIGINAL_FILE_ICON_BASE64 = """
 iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAAdgAAAHYBTnsmCAAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAADQSURBVDiNrdJPSkJRHMXxTy+jQMf2NtACmmg7cdIwaA3SoImuokGgU5fg0D24i/6REEHW4HnpIu/nU/DAHdzf5Xw558flX49Y4bfm3OAeJwJ18BOYE2CJKVq5scgAhWbdYobzbUCTWlhgjjbu8od99IBnVZ2kC3ylSynuH50ySjDAS5Ckh3E+qAOM8BEAyu1BHeAdbwGgsw/gCa8B4BrDKNrRl1hggssgTVghLfEM3V3mCHDVZMqVvvIn1gf41huP083gW7WYvir6Lq1UNefwB94DQhY2gk5mAAAAAElFTkSuQmCC/S5xBEMbxz5yCKGk0XWxtbMTisLNR7FKlSHWQdOlshZAyRVrLEAg2ltr6oxHsxXBiEYj5BwJRSNIoMhZ68hIxuVVyb8AbGHjngXnnu8PuMhuZqU5r1Fr9fwAY/F2IiHG8wFQX+Z8y8929CDLz2jGGE2SBL1b/UepR3YQRMYfnf2Gex0QlPsfTzNy8SwMiM0VEYPaqA3+yxA6W8bKi/8RhQd1jrGAdmvis+5ZvYwS7BTm3+VJgDc8K6OE93qBVkPMEC5iuaF8HsKr8ODbxCN8LcnbxGqcu9xGMcv82lngbQ9jqaHH10UtrYRgfqOcmnMeXTlAHQOPWoA7rA/QB+gAPHuC8boCNOgGO8PbGVNwj28NkZp41cNDj4u3M/JGZZx3hld4NJL8wdmMsj4gZl4+Rx/9w5fv4mJnfqmL0H6d1A1wA7a7l+w0x/NIAAAAASUVORK5CYII=
 """
 
-# ============================================================================
-# SYNTAX HIGHLIGHTING CONFIGURATION
-# ============================================================================
-# Keywords for syntax highlighting in code preview
-COMMON_KEYWORDS = {
-    'auto', 'break', 'case', 'char', 'const', 'continue', 'default', 'do',
-    'double', 'else', 'enum', 'extern', 'float', 'for', 'goto', 'if',
-    'int', 'long', 'register', 'return', 'short', 'signed', 'sizeof', 'static',
-    'struct', 'switch', 'typedef', 'union', 'unsigned', 'void', 'volatile', 'while',
-    'asm', 'dynamic_cast', 'namespace', 'reinterpret_cast', 'try', 'bool',
-    'explicit', 'new', 'static_cast', 'typeid', 'catch', 'false', 'operator',
-    'template', 'typename', 'class', 'friend', 'private', 'this', 'throw',
-    'true', 'virtual', 'delete', 'inline', 'public', 'protected', 'wchar_t',
-    'using', 'constexpr', 'nullptr', 'decltype', 'noexcept', 'static_assert',
-    'thread_local', 'alignas', 'alignof', 'char16_t', 'char32_t',
-    'abstract', 'assert', 'boolean', 'byte', 'extends', 'final', 'finally', 'implements',
-    'import', 'instanceof', 'interface', 'native', 'package', 'strictfp', 'super', 'synchronized',
-    'throws', 'transient',
-    'var', 'let', 'async', 'await', 'const', 'function', 'of',
-    'and', 'as', 'async', 'await', 'del', 'elif', 'except', 'from', 'global',
-    'in', 'is', 'lambda', 'nonlocal', 'not', 'or', 'pass', 'raise', 'with', 'yield',
-}
 
-# Regex patterns for different code elements
-SYNTAX_PATTERNS = {
-    'comment': r'(//[^\n]*|/\*.*?\*/|#.*)',
-    'preprocessor': r'(#\s*\w+)',
-    'string': r'(".*?"|\'.*?\')',
-    'keyword': r'\b(' + '|'.join(re.escape(k) for k in COMMON_KEYWORDS) + r')\b',
-    'number': r'\b([0-9]+\.?[0-9]*f?|[0-9]*\.?[0-9]+f?|0x[0-9a-fA-F]+[ulL]*|[0-9]+[ulL]*)\b',
-    'function_def': r'\b(def|function|class)\s+([a-zA-Z_]\w*)\b',
-    'type': r'\b(int|void|char|long|float|double|bool|byte|short|string|String|array|Array|list|List|dict|Dict)\b',
-}
-
-# Color scheme for syntax highlighting
-SYNTAX_COLORS = {
-    'comment': 'gray',
-    'preprocessor': 'purple',
-    'string': 'green',
-    'keyword': 'blue',
-    'number': 'orange',
-    'function_def': 'dark red',
-    'type': 'dark green',
-    'default': 'black'
-}
 
 # ============================================================================
 # GLOBAL GUI STATE VARIABLES
@@ -170,66 +126,6 @@ def run_in_thread(target_callable, *args, **kwargs):
     thread = threading.Thread(target=threaded_callable, daemon=True)
     thread.start()
 
-# ============================================================================
-# SYNTAX HIGHLIGHTING - Code preview functionality
-# ============================================================================
-def apply_syntax_highlighting(text_widget, content, file_extension):
-    text_widget.mark_set("range_start", "1.0")
-    text_widget.delete("1.0", tk.END)
-    text_widget.insert("1.0", content)
-    for tag_name in SYNTAX_COLORS.keys():
-        text_widget.tag_remove(tag_name, "1.0", tk.END)
-    text_widget.tag_add('default', "1.0", tk.END)
-    for tag_name, color in SYNTAX_COLORS.items():
-        text_widget.tag_configure(tag_name, foreground=color)
-    patterns_to_apply = {}
-    lang = file_extension.lower()
-    if lang in ('.c', '.cpp', '.h', '.hpp'):
-        patterns_to_apply = {k: v for k, v in SYNTAX_PATTERNS.items() if k not in ['function_def'] or k == 'type'}
-    elif lang in ('.java', '.js', '.py', '.ts', '.jsx', '.tsx'):
-        patterns_to_apply = {k: v for k, v in SYNTAX_PATTERNS.items() if k not in ['preprocessor']}
-    else:
-        patterns_to_apply = {k: v for k, v in SYNTAX_PATTERNS.items() if k not in ['preprocessor', 'function_def', 'type']}
-    for tag_name, pattern in patterns_to_apply.items():
-        flags = re.DOTALL if tag_name == 'comment' else 0
-        if tag_name == 'function_def':
-            for match in re.finditer(pattern, content, flags):
-                if match.groups() and len(match.groups()) > 1:
-                    name_start = match.start(2)
-                    name_end = match.end(2)
-                    start_index = "1.0 + %d chars" % name_start
-                    end_index = "1.0 + %d chars" % name_end
-                    text_widget.tag_remove('default', start_index, end_index)
-                    text_widget.tag_add(tag_name, start_index, end_index)
-        else:
-            for match in re.finditer(pattern, content, flags):
-                start_index = "1.0 + %d chars" % match.start()
-                end_index = "1.0 + %d chars" % match.end()
-                text_widget.tag_remove('default', start_index, end_index)
-                text_widget.tag_add(tag_name, start_index, end_index)
-
-def display_file_content_with_highlighting(item_path, text_preview_area):
-    text_preview_area.config(state=tk.NORMAL)
-    text_preview_area.delete(1.0, tk.END)
-    try:
-        if os.path.isdir(item_path):
-            text_preview_area.insert(tk.END, f"Folder: {os.path.basename(item_path)}\nDouble-click a file to see its preview.")
-        elif os.path.isfile(item_path):
-            file_extension = os.path.splitext(item_path)[1]
-            try:
-                with open(item_path, 'r', encoding='utf-8', errors='ignore') as file:
-                    content = file.read(1024 * 1024)
-                apply_syntax_highlighting(text_preview_area, content, file_extension)
-                if len(content) == 1024 * 1024:
-                    text_preview_area.insert(tk.END, "\n\n--- Preview truncated (1MB limit) ---", "comment")
-            except Exception as e:
-                text_preview_area.insert(tk.END, f"MISSING PREVIEW for {os.path.basename(item_path)}\n(Non-textual or unreadable file)\nError: {e}")
-        else:
-            text_preview_area.insert(tk.END, "Item not found or is not a file/directory.")
-    except Exception as e:
-        text_preview_area.insert(tk.END, f"An error occurred: {e}")
-    finally:
-        text_preview_area.config(state=tk.DISABLED)
 
 # ============================================================================
 # FILE TREE OPERATIONS - Building and navigating the file tree
@@ -303,18 +199,6 @@ def on_tree_select_changed(event, tree, text_preview_area):
     item_data = tree.item(selected_item_id)
     if not item_data or 'values' not in item_data or not item_data['values']:
         return
-
-def on_tree_double_click(event, tree, text_preview_area):
-    region = tree.identify_region(event.x, event.y)
-    item_id = tree.identify_row(event.y)
-    if not item_id or region not in ('cell', 'tree'):
-        return
-    if not tree.exists(item_id):
-        return
-    item_values = tree.item(item_id, 'values')
-    if item_values and len(item_values) >= 2 and item_values[1] == 'file':
-        full_item_path = item_values[0]
-        display_file_content_with_highlighting(full_item_path, text_preview_area)
 
 def on_tree_open(event, tree):
     selected_item_id = tree.focus()
@@ -868,21 +752,14 @@ def show_search_dialog(text_widget):
 # ============================================================================
 # CSV VIEWING FUNCTIONS - Load CSV from specific directory into tabs
 # ============================================================================
-def action_view_csv_result(tree, tab_name):
-    """View CSV result from the selected directory in the specified tab"""
+def action_view_csv_result(tree, tab_creator_callback=None, explorer_window=None):
+    """View CSV result from the selected directory in a new tab"""
     selected_item = tree.selection()
     if not selected_item:
-        log_queue.put("Please select a folder.")
+        messagebox.showwarning("No Selection", "Please select a folder containing res.csv.")
         return
 
     selected_path = tree.set(selected_item[0], 'fullpath')
-
-    # Get the CSV file and text widget for this tab
-    if tab_name not in csv_tabs_dict:
-        log_queue.put(f"Tab '{tab_name}' not found.")
-        return
-
-    csv_file, text_widget = csv_tabs_dict[tab_name]
 
     # If the selected path is a file, use its parent directory
     if os.path.isfile(selected_path):
@@ -890,25 +767,28 @@ def action_view_csv_result(tree, tab_name):
     else:
         csv_dir = selected_path
 
-    csv_path = os.path.join(csv_dir, csv_file)
+    # Look for res.csv in the selected directory
+    csv_path = os.path.join(csv_dir, "res.csv")
 
-    # Load the CSV
-    text_widget.delete(1.0, tk.END)
-
-    if os.path.exists(csv_path):
-        try:
-            with open(csv_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-                text_widget.insert(tk.END, content)
-            text_widget.insert(1.0, f"File: {csv_path}\n{'='*80}\n\n")
-            log_queue.put(f"Loaded {csv_file} from {csv_dir}")
-        except Exception as e:
-            text_widget.insert(tk.END, f"Error loading CSV file:\n{e}")
-            log_queue.put(f"Error loading {csv_file}: {e}")
-    else:
-        text_widget.insert(tk.END, f"CSV file not found: {csv_path}\n\n")
-        text_widget.insert(tk.END, f"Make sure the analysis has been run for this database.")
+    if not os.path.exists(csv_path):
+        messagebox.showerror("CSV Not Found", f"res.csv not found in:\n{csv_dir}\n\nMake sure analysis has been run for this database.")
         log_queue.put(f"CSV file not found: {csv_path}")
+        return
+
+    # Get parent folder name for the tab
+    db_name = os.path.basename(csv_dir)
+
+    # Create or update tab with the CSV content
+    if tab_creator_callback and explorer_window:
+        try:
+            explorer_window.after(0, lambda: tab_creator_callback(db_name, csv_path))
+            log_queue.put(f"Opened res.csv from {csv_dir} in tab '{db_name}'")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to open CSV:\n{e}")
+            log_queue.put(f"Error opening CSV: {e}")
+    else:
+        messagebox.showerror("Error", "Tab creator not available")
+        log_queue.put("Error: Tab creator callback not provided")
 
 # ============================================================================
 # CONTEXT MENU - Right-click menu for file operations
@@ -928,15 +808,7 @@ def show_context_menu(event, tree, log_text_widget=None, status_label=None, tab_
     context_menu.add_separator()
     context_menu.add_command(label="Create CodeQL Database", command=lambda: action_create_codeql_database(tree, status_label))
     context_menu.add_command(label="Analyze CodeQL Database", command=lambda: action_analyze_codeql_database(tree, status_label, tab_creator_callback, explorer_window))
-
-    # Add "View csv result" submenu
-    view_csv_menu = tk.Menu(context_menu, tearoff=0)
-    view_csv_menu.add_command(label="View as Macro result", command=lambda: action_view_csv_result(tree, "Macro"))
-    view_csv_menu.add_command(label="View as No args result", command=lambda: action_view_csv_result(tree, "No args analysis"))
-    view_csv_menu.add_command(label="View as Args result", command=lambda: action_view_csv_result(tree, "Args analysis"))
-    view_csv_menu.add_command(label="View as Regexp calls and args result", command=lambda: action_view_csv_result(tree, "Regexp calls and args"))
-    view_csv_menu.add_command(label="View as Regexp macro result", command=lambda: action_view_csv_result(tree, "Regexp macro"))
-    context_menu.add_cascade(label="View csv result", menu=view_csv_menu)
+    context_menu.add_command(label="View csv result", command=lambda: action_view_csv_result(tree, tab_creator_callback, explorer_window))
 
     context_menu.add_separator()
     context_menu.add_command(label="Rename", command=lambda: action_rename_item(tree, log_text_widget))
