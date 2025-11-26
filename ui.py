@@ -13,6 +13,7 @@ import inspect
 import sqlite3
 import traceback
 import shutil
+import csv
 
 # ============================================================================
 # PATH CONFIGURATION AND SETUP
@@ -593,7 +594,7 @@ def action_create_codeql_database(tree, status_label_widget=None):
 # ============================================================================
 # CODEQL ANALYSIS - Analyze database with pre-generated queries
 # ============================================================================
-def action_analyze_codeql_database(tree, status_label_widget=None):
+def action_analyze_codeql_database(tree, status_label_widget=None, tab_creator_callback=None, explorer_window=None):
     """Analyze a CodeQL database using pre-generated queries"""
     selected_item_id = tree.focus()
     if not selected_item_id:
@@ -613,11 +614,8 @@ def action_analyze_codeql_database(tree, status_label_widget=None):
 
     log_queue.put(f"Starting CodeQL analysis on database: {selected_path}")
 
-    # Define all pre-generated query files
+    # Define only the two regexp query files to run
     query_files = [
-        "query_noargs.ql",
-        "query_withargs.ql",
-        "query_macro.ql",
         "query_regexp_calls_and_args.ql",
         "query_regexp_macro.ql"
     ]
@@ -635,6 +633,7 @@ def action_analyze_codeql_database(tree, status_label_widget=None):
 
             successful_queries = 0
             failed_queries = 0
+            csv_files_to_merge = []
 
             for query_file in query_files:
                 query_path = os.path.join(GENERATED_QL_OUTPUT_DIR, query_file)
@@ -708,6 +707,9 @@ def action_analyze_codeql_database(tree, status_label_widget=None):
                     if result_decode.returncode == 0:
                         print(f"SUCCESS: CSV generated: {csv_path}")
                         successful_queries += 1
+                        # Add to merge list if CSV exists
+                        if os.path.exists(csv_path):
+                            csv_files_to_merge.append(csv_path)
                     else:
                         print(f"WARNING: CSV conversion failed for {query_file}")
                         successful_queries += 1  # Still count as success since query ran
@@ -721,6 +723,41 @@ def action_analyze_codeql_database(tree, status_label_widget=None):
                     print(traceback.format_exc())
                     failed_queries += 1
 
+            # Merge CSV files into res.csv
+            res_csv_path = os.path.join(output_dir, "res.csv")
+            if csv_files_to_merge:
+                try:
+                    print(f"\n{'='*60}")
+                    print(f"Merging CSV files into res.csv...")
+                    print(f"{'='*60}")
+
+                    all_rows = []
+                    header = None
+
+                    for csv_file in csv_files_to_merge:
+                        print(f"Reading: {os.path.basename(csv_file)}")
+                        with open(csv_file, 'r', encoding='utf-8') as f:
+                            reader = csv.reader(f)
+                            rows = list(reader)
+                            if rows:
+                                if header is None:
+                                    header = rows[0]
+                                    all_rows.append(header)
+                                # Add data rows (skip header)
+                                all_rows.extend(rows[1:])
+
+                    # Write merged CSV
+                    with open(res_csv_path, 'w', encoding='utf-8', newline='') as f:
+                        writer = csv.writer(f)
+                        writer.writerows(all_rows)
+
+                    print(f"SUCCESS: Merged CSV saved to: {res_csv_path}")
+                    print(f"Total rows (including header): {len(all_rows)}")
+
+                except Exception as e:
+                    print(f"ERROR: Failed to merge CSV files: {e}")
+                    print(traceback.format_exc())
+
             # Summary
             print(f"\n{'='*60}")
             print(f"Analysis Complete!")
@@ -728,14 +765,17 @@ def action_analyze_codeql_database(tree, status_label_widget=None):
             print(f"Successful queries: {successful_queries}/{len(query_files)}")
             print(f"Results saved to: {output_dir}")
 
-            # Auto-refresh all CSV tabs
-            print(f"\nRefreshing CSV tabs...")
-            for csv_file, load_func in csv_load_functions.items():
+            # Create or update tab for this database
+            if os.path.exists(res_csv_path) and tab_creator_callback and explorer_window:
+                # Get database name (parent folder name)
+                db_parent_folder = os.path.basename(output_dir)
+                print(f"\nCreating/updating tab for: {db_parent_folder}")
                 try:
-                    load_func()
-                    print(f"Refreshed: {csv_file}")
+                    # Schedule tab creation on the main thread
+                    explorer_window.after(0, lambda: tab_creator_callback(db_parent_folder, res_csv_path))
                 except Exception as e:
-                    print(f"Warning: Could not refresh {csv_file}: {e}")
+                    print(f"Error creating tab: {e}")
+                    print(traceback.format_exc())
 
 
         except Exception as e:
@@ -873,7 +913,7 @@ def action_view_csv_result(tree, tab_name):
 # ============================================================================
 # CONTEXT MENU - Right-click menu for file operations
 # ============================================================================
-def show_context_menu(event, tree, log_text_widget=None, status_label=None):
+def show_context_menu(event, tree, log_text_widget=None, status_label=None, tab_creator_callback=None, explorer_window=None):
     """Show right-click context menu"""
     # Select the item under cursor
     item_id = tree.identify_row(event.y)
@@ -887,7 +927,7 @@ def show_context_menu(event, tree, log_text_widget=None, status_label=None):
     context_menu.add_command(label="Create New File", command=lambda: action_create_file(tree, log_text_widget))
     context_menu.add_separator()
     context_menu.add_command(label="Create CodeQL Database", command=lambda: action_create_codeql_database(tree, status_label))
-    context_menu.add_command(label="Analyze CodeQL Database", command=lambda: action_analyze_codeql_database(tree, status_label))
+    context_menu.add_command(label="Analyze CodeQL Database", command=lambda: action_analyze_codeql_database(tree, status_label, tab_creator_callback, explorer_window))
 
     # Add "View csv result" submenu
     view_csv_menu = tk.Menu(context_menu, tearoff=0)
@@ -1221,20 +1261,6 @@ def create_file_explorer_window(folder_path_to_explore, root_window_to_destroy):
     path_label.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
 
     # ========================================================================
-    # ACTION BUTTONS BAR - Analysis and CodeQL operations
-    # ========================================================================
-    actions_buttons_frame = ttk.Labelframe(explorer_root, text="Analysis Actions", padding=10)
-    actions_buttons_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
-    btn_scan_env = ttk.Button(actions_buttons_frame, text="Scan Environment", command=action_scan_environment)
-    btn_scan_env.pack(side=tk.LEFT, padx=5, pady=5)
-    btn_update_db = ttk.Button(actions_buttons_frame, text="Update DB", command=action_update_db)
-    btn_update_db.pack(side=tk.LEFT, padx=5, pady=5)
-    btn_scan_project = ttk.Button(actions_buttons_frame, text="Generate QL & Scan Project", command=lambda: action_scan_project_codeql(explorer_root))
-    btn_scan_project.pack(side=tk.LEFT, padx=5, pady=5)
-    btn_report = ttk.Button(actions_buttons_frame, text="Generate PDF Report", command=lambda: action_generate_report(explorer_root))
-    btn_report.pack(side=tk.LEFT, padx=5, pady=5)
-
-    # ========================================================================
     # MAIN LAYOUT - Vertical and horizontal paned windows
     # ========================================================================
     main_v_pane = ttk.PanedWindow(explorer_root, orient=tk.VERTICAL)
@@ -1271,78 +1297,71 @@ def create_file_explorer_window(folder_path_to_explore, root_window_to_destroy):
     csv_notebook = ttk.Notebook(right_frame)
     csv_notebook.pack(fill=tk.BOTH, expand=True, padx=(0,5), pady=(0,5))
 
-    # Define tabs and their corresponding CSV files
-    csv_tabs = {
-        "Macro": ("query_macro.csv", None),
-        "No args analysis": ("query_noargs.csv", None),
-        "Args analysis": ("query_withargs.csv", None),
-        "Regexp calls and args": ("query_regexp_calls_and_args.csv", None),
-        "Regexp macro": ("query_regexp_macro.csv", None)
-    }
+    # Dictionary to store tabs: {db_name: (tab_frame, text_area, res_csv_path)}
+    dynamic_tabs = {}
 
-    # Create tabs with scrolled text areas
-    for tab_name, (csv_file, _) in csv_tabs.items():
-        tab_frame = ttk.Frame(csv_notebook)
-        csv_notebook.add(tab_frame, text=tab_name)
+    # Function to create a new tab for a database
+    def create_tab_for_database(db_name, res_csv_path):
+        """Create a new tab for a database analysis result"""
+        # Check if tab already exists
+        if db_name in dynamic_tabs:
+            # Update existing tab
+            _, text_area, _ = dynamic_tabs[db_name]
+            text_area.delete(1.0, tk.END)
+        else:
+            # Create new tab
+            tab_frame = ttk.Frame(csv_notebook)
+            csv_notebook.add(tab_frame, text=db_name)
 
-        # Text area for CSV content
-        csv_text_area = scrolledtext.ScrolledText(
-            tab_frame,
-            wrap=tk.NONE,
-            font=("Consolas", 9)
-        )
-        csv_text_area.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+            # Text area for CSV content
+            text_area = scrolledtext.ScrolledText(
+                tab_frame,
+                wrap=tk.NONE,
+                font=("Consolas", 9)
+            )
+            text_area.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # Make text area read-only but searchable
-        def make_readonly(event):
-            # Allow Ctrl+C, Ctrl+A, and navigation keys
-            if event.state & 0x4:  # Ctrl key
-                if event.keysym in ('c', 'a', 'f', 'C', 'A', 'F'):
+            # Make text area read-only but searchable
+            def make_readonly(event):
+                # Allow Ctrl+C, Ctrl+A, and navigation keys
+                if event.state & 0x4:  # Ctrl key
+                    if event.keysym in ('c', 'a', 'f', 'C', 'A', 'F'):
+                        return
+                # Allow arrow keys, home, end, page up/down
+                if event.keysym in ('Up', 'Down', 'Left', 'Right', 'Home', 'End', 'Prior', 'Next'):
                     return
-            # Allow arrow keys, home, end, page up/down
-            if event.keysym in ('Up', 'Down', 'Left', 'Right', 'Home', 'End', 'Prior', 'Next'):
-                return
-            return "break"
+                return "break"
 
-        csv_text_area.bind("<Key>", make_readonly)
+            text_area.bind("<Key>", make_readonly)
 
-        # Bind Ctrl+F to open search dialog
-        csv_text_area.bind("<Control-f>", lambda e, tw=csv_text_area: show_search_dialog(tw))
+            # Bind Ctrl+F to open search dialog
+            text_area.bind("<Control-f>", lambda e, tw=text_area: show_search_dialog(tw))
 
-        # Store reference to text area
-        csv_tabs[tab_name] = (csv_file, csv_text_area)
-        csv_tabs_dict[tab_name] = (csv_file, csv_text_area)
+            # Store tab reference
+            dynamic_tabs[db_name] = (tab_frame, text_area, res_csv_path)
 
-        # Function to load CSV for this specific tab
-        def make_load_csv(csv_filename, text_widget):
-            def load_csv():
-                text_widget.delete(1.0, tk.END)
+        # Load the CSV content
+        _, text_area, _ = dynamic_tabs[db_name]
+        if os.path.exists(res_csv_path):
+            try:
+                with open(res_csv_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    text_area.insert(tk.END, content)
+                text_area.insert(1.0, f"File: {res_csv_path}\n{'='*80}\n\n")
+                print(f"Loaded CSV into tab '{db_name}': {res_csv_path}")
+            except Exception as e:
+                text_area.insert(tk.END, f"Error loading CSV file:\n{e}")
+                print(f"Error loading CSV for tab '{db_name}': {e}")
+        else:
+            text_area.insert(tk.END, f"CSV file not found: {res_csv_path}\n\n")
+            text_area.insert(tk.END, f"The analysis may have failed to generate this file.")
+            print(f"CSV not found for tab '{db_name}': {res_csv_path}")
 
-                if not last_analysis_output_dir:
-                    text_widget.insert(tk.END, "No analysis has been run yet.\n\n")
-                    text_widget.insert(tk.END, "Right-click a CodeQL database and select 'Analyze CodeQL Database'.")
-                    return
-
-                csv_path = os.path.join(last_analysis_output_dir, csv_filename)
-
-                if os.path.exists(csv_path):
-                    try:
-                        with open(csv_path, 'r', encoding='utf-8') as f:
-                            content = f.read()
-                            text_widget.insert(tk.END, content)
-                        text_widget.insert(1.0, f"File: {csv_path}\n{'='*80}\n\n")
-                    except Exception as e:
-                        text_widget.insert(tk.END, f"Error loading CSV file:\n{e}")
-                else:
-                    text_widget.insert(tk.END, f"CSV file not found: {csv_path}\n\n")
-                    text_widget.insert(tk.END, f"The analysis may have failed to generate this file.")
-            return load_csv
-
-        # Store the load function globally for auto-refresh after analysis
-        load_func = make_load_csv(csv_file, csv_text_area)
-        csv_load_functions[csv_file] = load_func
-
-        # Tabs start empty and will be automatically populated after analysis
+        # Switch to the new/updated tab
+        for i in range(csv_notebook.index("end")):
+            if csv_notebook.tab(i, "text") == db_name:
+                csv_notebook.select(i)
+                break
 
     # Populate the file tree with initial data
     print("Populating file tree...")
@@ -1365,18 +1384,16 @@ def create_file_explorer_window(folder_path_to_explore, root_window_to_destroy):
     # ========================================================================
     # CONTEXT MENU BINDINGS - Right-click menu
     # ========================================================================
-    file_tree.bind("<Button-3>", lambda e: show_context_menu(e, file_tree, None, status_label))  # Right-click (Linux/Windows)
-    file_tree.bind("<Button-2>", lambda e: show_context_menu(e, file_tree, None, status_label))  # Right-click (Mac)
+    file_tree.bind("<Button-3>", lambda e: show_context_menu(e, file_tree, None, status_label, create_tab_for_database, explorer_root))  # Right-click (Linux/Windows)
+    file_tree.bind("<Button-2>", lambda e: show_context_menu(e, file_tree, None, status_label, create_tab_for_database, explorer_root))  # Right-click (Mac)
 
     # ========================================================================
-    # FINALIZATION - Disable buttons if CLI tools unavailable
+    # FINALIZATION - Check CLI tools availability
     # ========================================================================
     if not cli_dependencies_found:
         print("Warning: CLI tool dependencies could not be imported. Analysis actions are disabled.")
-        for btn in [btn_scan_env, btn_update_db, btn_scan_project, btn_report]:
-            btn.config(state=tk.DISABLED)
     else:
-        print("CLI Analyzer Ready. Select an action.")
+        print("CLI Analyzer Ready. Right-click on a CodeQL database to analyze.")
 
     # Start the main event loop
     print("Starting main event loop...")

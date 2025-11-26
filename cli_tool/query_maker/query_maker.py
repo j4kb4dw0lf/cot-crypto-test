@@ -603,7 +603,6 @@ def generate_query_regexp_calls_and_args():
 select
   vulnContent,
   algorithm as category,
-  "" as subCategory,
   alternative,
   call.getLocation() as line
 
@@ -674,7 +673,6 @@ def generate_query_regexp_macro():
     select
       mi.getMacro().getName() as vulnContent,
       algorithm as category,
-      "" as subCategory,
       alternative,
       mi.getLocation() as line
 
