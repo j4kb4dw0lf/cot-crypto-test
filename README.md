@@ -1,15 +1,15 @@
-### GUI Option
 1) Run `python ui.py`
+2) Choose the workspace and right-click the codebase to open the dialog pane to create the CodeQL's database.
+   <img width="690" height="502" alt="demo-step-1" src="https://github.com/user-attachments/assets/edfae8f5-6706-49d1-b135-23594948d6a8" />
+3) Choose right-click the CodeQL's database to analyze it.
+   
+   <img width="690" height="502" alt="demo-step-2" src="https://github.com/user-attachments/assets/c2615b5b-7d30-4c33-b667-a68fafb3abb9" />
+   
+5) The result will be printed.
+   
+   <img width="690" height="502" alt="demo-step-3" src="https://github.com/user-attachments/assets/acbf98ef-b3a1-4089-9ffb-340519ab957b" />
+   
+   The SARIF file can be opened by a SARIF viewer (e.g. VS code extension).
+   <img width="690" height="502" alt="demo-step-4" src="https://github.com/user-attachments/assets/0411f43a-83aa-4400-8b4a-3b6b6b96303a" />
 
-### CLI Option
-#### Scan project
-1) Run `python core.py scan-project` having in the same working directory the codeQl's database with folder's name `codeql-db` and having the primitivies' database store in a folder named `DB`.
-You will see the different libraries that you have.
 
-2) Run `python core.py scan-project <library id> or any` to analyze the code based on specific (or all) libraries.
-The result will be stored in `outputs` folder.
-
-#### Create report
-1) Run `python core.py report` to see all the different analysis files stored in the `outputs` folder.
-
-2) `python core.py report <filename>` to generate the PDF report into the `output` folder.
