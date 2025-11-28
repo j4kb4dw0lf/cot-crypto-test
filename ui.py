@@ -14,6 +14,8 @@ import sqlite3
 import traceback
 import shutil
 import csv
+import json
+import urllib.parse
 
 # ============================================================================
 # PATH CONFIGURATION AND SETUP
@@ -46,10 +48,15 @@ except ImportError as e:
     def cli_update_db(): raise NotImplementedError("db_creator_updater not found")
     def generate_query_no_args(cat, prim): raise NotImplementedError("query_maker not found")
     def generate_query_with_args(cat, prim): raise NotImplementedError("query_maker not found")
-    def generate_query_macro(): raise NotImplementedError("query_maker not found")
+    def generate_query_macros(): raise NotImplementedError("query_maker not found")
     def generate_query_regexp_calls_and_args(): raise NotImplementedError("query_maker not found")
     def generate_query_regexp_macro(): raise NotImplementedError("query_maker not found")
     def cli_make_pdf_report(bqrs_path, output_pdf): raise NotImplementedError("report_maker not found")
+
+# ============================================================================
+# UI UTILITIES IMPORT - Custom UI components
+# ============================================================================
+from ui_utils import ask_string_with_paste
 
 # ============================================================================
 # GLOBAL PATHS AND DIRECTORIES
@@ -90,9 +97,9 @@ current_opened_folder_path = None
 initial_root_window = None
 folder_icon_tk = None  # Folder icon for tree view
 file_icon_tk = None    # File icon for tree view
-csv_load_functions = {}  # Dictionary to store CSV load functions for auto-refresh
+sarif_load_functions = {}  # Dictionary to store SARIF load functions for auto-refresh
 last_analysis_output_dir = None  # Last directory where analysis results were saved
-csv_tabs_dict = {}  # Dictionary to store CSV tab information (tab_name -> (csv_file, text_widget))
+sarif_tabs_dict = {}  # Dictionary to store SARIF tab information (tab_name -> (sarif_file, text_widget))
 
 # ============================================================================
 # UTILITY FUNCTIONS - Logging and Threading
@@ -223,59 +230,8 @@ def refresh_tree_node(tree, node_id):
             populate_tree(tree, node_id, folder_path, force_refresh=True)
 
 # ============================================================================
-# FILE SYSTEM OPERATIONS - Create, delete, rename files and folders
+# FILE SYSTEM OPERATIONS - Delete and rename files and folders
 # ============================================================================
-def action_create_folder(tree, log_text_widget=None):
-    """Create a new folder in the current directory (from navigation bar path)"""
-    global current_opened_folder_path
-
-    # Use the current path shown in navigation bar
-    parent_path = current_opened_folder_path
-
-    # Ask for folder name
-    folder_name = simpledialog.askstring("Create Folder", "Enter new folder name:", parent=tree.winfo_toplevel())
-    if not folder_name:
-        return
-
-    new_folder_path = os.path.join(parent_path, folder_name)
-
-    try:
-        os.makedirs(new_folder_path, exist_ok=False)
-        print(f"Created folder: {new_folder_path}")
-        # Refresh the root tree
-        refresh_tree_node(tree, '')
-    except FileExistsError:
-        messagebox.showerror("Error", f"Folder '{folder_name}' already exists!")
-    except Exception as e:
-        messagebox.showerror("Error", f"Failed to create folder: {e}")
-        print(f"Error creating folder: {e}")
-
-def action_create_file(tree, log_text_widget=None):
-    """Create a new file in the current directory (from navigation bar path)"""
-    global current_opened_folder_path
-
-    # Use the current path shown in navigation bar
-    parent_path = current_opened_folder_path
-
-    # Ask for file name
-    file_name = simpledialog.askstring("Create File", "Enter new file name:", parent=tree.winfo_toplevel())
-    if not file_name:
-        return
-
-    new_file_path = os.path.join(parent_path, file_name)
-
-    try:
-        with open(new_file_path, 'x') as f:
-            f.write("")
-        print(f"Created file: {new_file_path}")
-        # Refresh the root tree
-        refresh_tree_node(tree, '')
-    except FileExistsError:
-        messagebox.showerror("Error", f"File '{file_name}' already exists!")
-    except Exception as e:
-        messagebox.showerror("Error", f"Failed to create file: {e}")
-        print(f"Error creating file: {e}")
-
 def action_delete_item(tree, log_text_widget=None):
     """Delete selected file or folder"""
     selected_item_id = tree.focus()
@@ -324,8 +280,8 @@ def action_rename_item(tree, log_text_widget=None):
     old_path = item_values[0]
     old_name = os.path.basename(old_path)
 
-    # Ask for new name
-    new_name = simpledialog.askstring("Rename", f"Enter new name for '{old_name}':", initialvalue=old_name, parent=tree.winfo_toplevel())
+    # Ask for new name using custom dialog with paste support
+    new_name = ask_string_with_paste("Rename", f"Enter new name for '{old_name}':", parent=tree.winfo_toplevel(), initial_value=old_name)
     if not new_name or new_name == old_name:
         return
 
@@ -397,8 +353,8 @@ def action_create_codeql_database(tree, status_label_widget=None):
         # Use default options (no --command flag)
         build_command = None
     else:
-        # Ask for build options
-        build_options = simpledialog.askstring(
+        # Ask for build options using custom dialog with paste support
+        build_options = ask_string_with_paste(
             "Build Options",
             "Enter build options (e.g., make, cmake --build .):",
             parent=tree.winfo_toplevel()
@@ -512,12 +468,12 @@ def action_analyze_codeql_database(tree, status_label_widget=None, tab_creator_c
 
             # Save output files in the parent directory of the database
             output_dir = os.path.dirname(selected_path)
-            last_analysis_output_dir = output_dir  # Store for CSV loading
+            last_analysis_output_dir = output_dir  # Store for SARIF loading
             log_queue.put(f"Output directory: {output_dir}")
 
             successful_queries = 0
             failed_queries = 0
-            csv_files_to_merge = []
+            sarif_files_to_merge = []
 
             for query_file in query_files:
                 query_path = os.path.join(GENERATED_QL_OUTPUT_DIR, query_file)
@@ -529,7 +485,7 @@ def action_analyze_codeql_database(tree, status_label_widget=None, tab_creator_c
                 # Define output paths
                 query_basename = os.path.splitext(query_file)[0]
                 bqrs_path = os.path.join(output_dir, f"{query_basename}.bqrs")
-                csv_path = os.path.join(output_dir, f"{query_basename}.csv")
+                sarif_path = os.path.join(output_dir, f"{query_basename}.sarif")
 
                 print(f"\n{'='*60}")
                 print(f"Running query: {query_file}")
@@ -565,37 +521,39 @@ def action_analyze_codeql_database(tree, status_label_widget=None, tab_creator_c
 
                     print(f"SUCCESS: Query executed successfully: {bqrs_path}")
 
-                    # Step 2: Convert BQRS to CSV
-                    print(f"Converting BQRS to CSV...")
-                    cmd_decode = [
-                        "codeql", "bqrs", "decode",
-                        "--format=csv",
-                        f"--output={csv_path}",
+                    # Step 2: Convert BQRS to SARIF
+                    print(f"Converting BQRS to SARIF...")
+                    cmd_interpret = [
+                        "codeql", "bqrs", "interpret",
+                        "--format=sarifv2.1.0",
+                        "-t=kind=problem",
+                        f"--output={sarif_path}",
+                        "--",
                         bqrs_path
                     ]
 
-                    print(f"Command: {' '.join(cmd_decode)}")
+                    print(f"Command: {' '.join(cmd_interpret)}")
 
-                    result_decode = subprocess.run(
-                        cmd_decode,
+                    result_interpret = subprocess.run(
+                        cmd_interpret,
                         capture_output=True,
                         text=True,
                         creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
                     )
 
-                    if result_decode.stdout:
-                        print(f"STDOUT:\n{result_decode.stdout}")
-                    if result_decode.stderr:
-                        print(f"STDERR:\n{result_decode.stderr}")
+                    if result_interpret.stdout:
+                        print(f"STDOUT:\n{result_interpret.stdout}")
+                    if result_interpret.stderr:
+                        print(f"STDERR:\n{result_interpret.stderr}")
 
-                    if result_decode.returncode == 0:
-                        print(f"SUCCESS: CSV generated: {csv_path}")
+                    if result_interpret.returncode == 0:
+                        print(f"SUCCESS: SARIF generated: {sarif_path}")
                         successful_queries += 1
-                        # Add to merge list if CSV exists
-                        if os.path.exists(csv_path):
-                            csv_files_to_merge.append(csv_path)
+                        # Add to merge list if SARIF exists
+                        if os.path.exists(sarif_path):
+                            sarif_files_to_merge.append(sarif_path)
                     else:
-                        print(f"WARNING: CSV conversion failed for {query_file}")
+                        print(f"WARNING: SARIF conversion failed for {query_file}")
                         successful_queries += 1  # Still count as success since query ran
 
                 except FileNotFoundError:
@@ -607,39 +565,41 @@ def action_analyze_codeql_database(tree, status_label_widget=None, tab_creator_c
                     print(traceback.format_exc())
                     failed_queries += 1
 
-            # Merge CSV files into res.csv
-            res_csv_path = os.path.join(output_dir, "res.csv")
-            if csv_files_to_merge:
+            # Merge SARIF files into res.sarif
+            res_sarif_path = os.path.join(output_dir, "res.sarif")
+            if sarif_files_to_merge:
                 try:
                     print(f"\n{'='*60}")
-                    print(f"Merging CSV files into res.csv...")
+                    print(f"Merging SARIF files into res.sarif...")
                     print(f"{'='*60}")
 
-                    all_rows = []
-                    header = None
+                    # Build the merge command
+                    cmd_merge = ["codeql", "github", "merge-results"]
+                    for sarif_file in sarif_files_to_merge:
+                        cmd_merge.append(f"--sarif={sarif_file}")
+                    cmd_merge.append(f"--output={res_sarif_path}")
 
-                    for csv_file in csv_files_to_merge:
-                        print(f"Reading: {os.path.basename(csv_file)}")
-                        with open(csv_file, 'r', encoding='utf-8') as f:
-                            reader = csv.reader(f)
-                            rows = list(reader)
-                            if rows:
-                                if header is None:
-                                    header = rows[0]
-                                    all_rows.append(header)
-                                # Add data rows (skip header)
-                                all_rows.extend(rows[1:])
+                    print(f"Command: {' '.join(cmd_merge)}")
 
-                    # Write merged CSV
-                    with open(res_csv_path, 'w', encoding='utf-8', newline='') as f:
-                        writer = csv.writer(f)
-                        writer.writerows(all_rows)
+                    result_merge = subprocess.run(
+                        cmd_merge,
+                        capture_output=True,
+                        text=True,
+                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                    )
 
-                    print(f"SUCCESS: Merged CSV saved to: {res_csv_path}")
-                    print(f"Total rows (including header): {len(all_rows)}")
+                    if result_merge.stdout:
+                        print(f"STDOUT:\n{result_merge.stdout}")
+                    if result_merge.stderr:
+                        print(f"STDERR:\n{result_merge.stderr}")
+
+                    if result_merge.returncode == 0:
+                        print(f"SUCCESS: Merged SARIF saved to: {res_sarif_path}")
+                    else:
+                        print(f"ERROR: Failed to merge SARIF files. Exit code: {result_merge.returncode}")
 
                 except Exception as e:
-                    print(f"ERROR: Failed to merge CSV files: {e}")
+                    print(f"ERROR: Failed to merge SARIF files: {e}")
                     print(traceback.format_exc())
 
             # Summary
@@ -650,13 +610,13 @@ def action_analyze_codeql_database(tree, status_label_widget=None, tab_creator_c
             print(f"Results saved to: {output_dir}")
 
             # Create or update tab for this database
-            if os.path.exists(res_csv_path) and tab_creator_callback and explorer_window:
+            if os.path.exists(res_sarif_path) and tab_creator_callback and explorer_window:
                 # Get database name (parent folder name)
                 db_parent_folder = os.path.basename(output_dir)
                 print(f"\nCreating/updating tab for: {db_parent_folder}")
                 try:
                     # Schedule tab creation on the main thread
-                    explorer_window.after(0, lambda: tab_creator_callback(db_parent_folder, res_csv_path))
+                    explorer_window.after(0, lambda: tab_creator_callback(db_parent_folder, res_sarif_path))
                 except Exception as e:
                     print(f"Error creating tab: {e}")
                     print(traceback.format_exc())
@@ -750,42 +710,141 @@ def show_search_dialog(text_widget):
     search_window.bind("<Escape>", lambda e: search_window.destroy())
 
 # ============================================================================
-# CSV VIEWING FUNCTIONS - Load CSV from specific directory into tabs
+# SARIF PARSING HELPER - Parse SARIF files into human-readable format
+# ============================================================================
+def readSarif(sarif_path):
+    """
+    Parse a SARIF file and return formatted, human-readable text.
+    Based on logic from testsarif.py
+
+    Args:
+        sarif_path: Path to the SARIF file
+
+    Returns:
+        str: Formatted text with results from the SARIF file
+    """
+    try:
+        # Read and validate JSON
+        with open(sarif_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        # Validate basic SARIF structure
+        if not isinstance(data, dict):
+            return "Error: SARIF file must contain a JSON object.\n"
+
+        if "runs" not in data:
+            return "Error: SARIF file is missing required 'runs' field.\n"
+
+        output_lines = []
+        result_count = 0
+
+        for run in data.get("runs", []):
+            results = run.get("results", [])
+            for res in results:
+                result_count += 1
+
+                # Extract message
+                msg = None
+                m = res.get("message")
+                if m:
+                    # SARIF message object may have 'text' or 'message' etc
+                    msg = m.get("text") or m.get("message") or str(m)
+                if not msg:
+                    msg = "<no message>"
+
+                # Extract location(s)
+                locs = res.get("locations") or []
+                if not locs:
+                    # No location, just print the message
+                    output_lines.append(f"[Result {result_count}]")
+                    output_lines.append(msg)
+                    output_lines.append("")
+                else:
+                    for loc in locs:
+                        phys = loc.get("physicalLocation")
+                        if not phys:
+                            output_lines.append(f"[Result {result_count}]")
+                            output_lines.append(msg)
+                            output_lines.append("")
+                            continue
+
+                        art = phys.get("artifactLocation")
+                        uri = None
+                        if art:
+                            uri = art.get("uri")
+                            # Sometimes URIs are file:///... — unwrap if so
+                            if uri and uri.startswith("file://"):
+                                uri = urllib.parse.unquote(uri[len("file://"):])
+
+                        region = phys.get("region")
+                        if region:
+                            start_line = region.get("startLine")
+                            start_col = region.get("startColumn")
+                            loc_str = uri or "<unknown file>"
+                            if start_line is not None:
+                                loc_str += f":{start_line}"
+                                if start_col is not None:
+                                    loc_str += f":{start_col}"
+                        else:
+                            loc_str = uri or "<unknown file>"
+
+                        output_lines.append(f"[Result {result_count}]")
+                        output_lines.append(msg)
+                        output_lines.append(f"Location: {loc_str}")
+                        output_lines.append("")
+
+        if result_count == 0:
+            return "No results found in SARIF file.\n"
+
+        header = f"Total Results: {result_count}\n{'='*80}\n\n"
+        return header + "\n".join(output_lines)
+
+    except json.JSONDecodeError as e:
+        return f"Error: Invalid JSON in SARIF file.\n\nDetails: {str(e)}\n\nThe file may be corrupted or not a valid JSON file."
+    except FileNotFoundError:
+        return f"Error: SARIF file not found at path:\n{sarif_path}\n"
+    except PermissionError:
+        return f"Error: Permission denied reading SARIF file:\n{sarif_path}\n"
+    except Exception as e:
+        return f"Error reading SARIF file:\n{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+
+# ============================================================================
+# SARIF VIEWING FUNCTIONS - Load SARIF from specific directory into tabs
 # ============================================================================
 def action_view_csv_result(tree, tab_creator_callback=None, explorer_window=None):
-    """View CSV result from the selected directory in a new tab"""
+    """View SARIF result from the selected directory in a new tab"""
     selected_item = tree.selection()
     if not selected_item:
-        messagebox.showwarning("No Selection", "Please select a folder containing res.csv.")
+        messagebox.showwarning("No Selection", "Please select a folder containing res.sarif.")
         return
 
     selected_path = tree.set(selected_item[0], 'fullpath')
 
     # If the selected path is a file, use its parent directory
     if os.path.isfile(selected_path):
-        csv_dir = os.path.dirname(selected_path)
+        sarif_dir = os.path.dirname(selected_path)
     else:
-        csv_dir = selected_path
+        sarif_dir = selected_path
 
-    # Look for res.csv in the selected directory
-    csv_path = os.path.join(csv_dir, "res.csv")
+    # Look for res.sarif in the selected directory
+    sarif_path = os.path.join(sarif_dir, "res.sarif")
 
-    if not os.path.exists(csv_path):
-        messagebox.showerror("CSV Not Found", f"res.csv not found in:\n{csv_dir}\n\nMake sure analysis has been run for this database.")
-        log_queue.put(f"CSV file not found: {csv_path}")
+    if not os.path.exists(sarif_path):
+        messagebox.showerror("SARIF Not Found", f"res.sarif not found in:\n{sarif_dir}\n\nMake sure analysis has been run for this database.")
+        log_queue.put(f"SARIF file not found: {sarif_path}")
         return
 
     # Get parent folder name for the tab
-    db_name = os.path.basename(csv_dir)
+    db_name = os.path.basename(sarif_dir)
 
-    # Create or update tab with the CSV content
+    # Create or update tab with the SARIF content
     if tab_creator_callback and explorer_window:
         try:
-            explorer_window.after(0, lambda: tab_creator_callback(db_name, csv_path))
-            log_queue.put(f"Opened res.csv from {csv_dir} in tab '{db_name}'")
+            explorer_window.after(0, lambda: tab_creator_callback(db_name, sarif_path))
+            log_queue.put(f"Opened res.sarif from {sarif_dir} in tab '{db_name}'")
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to open CSV:\n{e}")
-            log_queue.put(f"Error opening CSV: {e}")
+            messagebox.showerror("Error", f"Failed to open SARIF:\n{e}")
+            log_queue.put(f"Error opening SARIF: {e}")
     else:
         messagebox.showerror("Error", "Tab creator not available")
         log_queue.put("Error: Tab creator callback not provided")
@@ -803,12 +862,9 @@ def show_context_menu(event, tree, log_text_widget=None, status_label=None, tab_
 
     # Create context menu
     context_menu = tk.Menu(tree, tearoff=0)
-    context_menu.add_command(label="Create New Folder", command=lambda: action_create_folder(tree, log_text_widget))
-    context_menu.add_command(label="Create New File", command=lambda: action_create_file(tree, log_text_widget))
-    context_menu.add_separator()
     context_menu.add_command(label="Create CodeQL Database", command=lambda: action_create_codeql_database(tree, status_label))
     context_menu.add_command(label="Analyze CodeQL Database", command=lambda: action_analyze_codeql_database(tree, status_label, tab_creator_callback, explorer_window))
-    context_menu.add_command(label="View csv result", command=lambda: action_view_csv_result(tree, tab_creator_callback, explorer_window))
+    context_menu.add_command(label="View SARIF result", command=lambda: action_view_csv_result(tree, tab_creator_callback, explorer_window))
 
     context_menu.add_separator()
     context_menu.add_command(label="Rename", command=lambda: action_rename_item(tree, log_text_widget))
@@ -1088,7 +1144,10 @@ def create_file_explorer_window(folder_path_to_explore, root_window_to_destroy):
     # ========================================================================
     print("Creating Tk window...")
     explorer_root = tk.Tk()
-    explorer_root.title(f"File Explorer & Analyzer - {os.path.basename(folder_path_to_explore)}")
+    if folder_path_to_explore:
+        explorer_root.title(f"File Explorer & Analyzer - {os.path.basename(folder_path_to_explore)}")
+    else:
+        explorer_root.title("File Explorer & Analyzer - No Workspace")
     explorer_root.geometry("1000x800")
     print("Tk window created")
 
@@ -1119,7 +1178,7 @@ def create_file_explorer_window(folder_path_to_explore, root_window_to_destroy):
         global current_opened_folder_path
         new_folder = filedialog.askdirectory(
             title="Choose Workspace Folder",
-            initialdir=current_opened_folder_path,
+            initialdir=current_opened_folder_path if current_opened_folder_path else os.path.expanduser("~"),
             parent=explorer_root
         )
         if new_folder:
@@ -1129,7 +1188,7 @@ def create_file_explorer_window(folder_path_to_explore, root_window_to_destroy):
             populate_tree(file_tree, '', new_folder, force_refresh=True)
 
     ttk.Button(nav_frame, text="Choose Workspace", command=choose_workspace).pack(side=tk.LEFT, padx=(0, 5))
-    path_label = ttk.Label(nav_frame, text=f"Path: {folder_path_to_explore}", relief="sunken", anchor='w')
+    path_label = ttk.Label(nav_frame, text=f"Path: {folder_path_to_explore}" if folder_path_to_explore else "Path: (No workspace selected - Click 'Choose Workspace')", relief="sunken", anchor='w')
     path_label.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
 
     # ========================================================================
@@ -1160,20 +1219,20 @@ def create_file_explorer_window(folder_path_to_explore, root_window_to_destroy):
         file_tree.column(col, width=0, stretch=tk.NO)
 
     # ========================================================================
-    # RIGHT PANE - CSV Results Tabbed View
+    # RIGHT PANE - SARIF Results Tabbed View
     # ========================================================================
     right_frame = ttk.Frame(explorer_h_pane)
     explorer_h_pane.add(right_frame, weight=3)
 
-    # Create tabbed notebook for CSV results
+    # Create tabbed notebook for SARIF results
     csv_notebook = ttk.Notebook(right_frame)
     csv_notebook.pack(fill=tk.BOTH, expand=True, padx=(0,5), pady=(0,5))
 
-    # Dictionary to store tabs: {db_name: (tab_frame, text_area, res_csv_path)}
+    # Dictionary to store tabs: {db_name: (tab_frame, text_area, res_sarif_path)}
     dynamic_tabs = {}
 
     # Function to create a new tab for a database
-    def create_tab_for_database(db_name, res_csv_path):
+    def create_tab_for_database(db_name, res_sarif_path):
         """Create a new tab for a database analysis result"""
         # Check if tab already exists
         if db_name in dynamic_tabs:
@@ -1185,7 +1244,7 @@ def create_file_explorer_window(folder_path_to_explore, root_window_to_destroy):
             tab_frame = ttk.Frame(csv_notebook)
             csv_notebook.add(tab_frame, text=db_name)
 
-            # Text area for CSV content
+            # Text area for SARIF content
             text_area = scrolledtext.ScrolledText(
                 tab_frame,
                 wrap=tk.NONE,
@@ -1210,24 +1269,24 @@ def create_file_explorer_window(folder_path_to_explore, root_window_to_destroy):
             text_area.bind("<Control-f>", lambda e, tw=text_area: show_search_dialog(tw))
 
             # Store tab reference
-            dynamic_tabs[db_name] = (tab_frame, text_area, res_csv_path)
+            dynamic_tabs[db_name] = (tab_frame, text_area, res_sarif_path)
 
-        # Load the CSV content
+        # Load the SARIF content using the helper function
         _, text_area, _ = dynamic_tabs[db_name]
-        if os.path.exists(res_csv_path):
+        if os.path.exists(res_sarif_path):
             try:
-                with open(res_csv_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                    text_area.insert(tk.END, content)
-                text_area.insert(1.0, f"File: {res_csv_path}\n{'='*80}\n\n")
-                print(f"Loaded CSV into tab '{db_name}': {res_csv_path}")
+                # Use readSarif helper to parse and format the SARIF file
+                formatted_content = readSarif(res_sarif_path)
+                text_area.insert(tk.END, formatted_content)
+                text_area.insert(1.0, f"File: {res_sarif_path}\n{'='*80}\n\n")
+                print(f"Loaded SARIF into tab '{db_name}': {res_sarif_path}")
             except Exception as e:
-                text_area.insert(tk.END, f"Error loading CSV file:\n{e}")
-                print(f"Error loading CSV for tab '{db_name}': {e}")
+                text_area.insert(tk.END, f"Error loading SARIF file:\n{e}")
+                print(f"Error loading SARIF for tab '{db_name}': {e}")
         else:
-            text_area.insert(tk.END, f"CSV file not found: {res_csv_path}\n\n")
+            text_area.insert(tk.END, f"SARIF file not found: {res_sarif_path}\n\n")
             text_area.insert(tk.END, f"The analysis may have failed to generate this file.")
-            print(f"CSV not found for tab '{db_name}': {res_csv_path}")
+            print(f"SARIF not found for tab '{db_name}': {res_sarif_path}")
 
         # Switch to the new/updated tab
         for i in range(csv_notebook.index("end")):
@@ -1235,10 +1294,13 @@ def create_file_explorer_window(folder_path_to_explore, root_window_to_destroy):
                 csv_notebook.select(i)
                 break
 
-    # Populate the file tree with initial data
-    print("Populating file tree...")
-    populate_tree(file_tree, '', folder_path_to_explore)
-    print("File tree populated")
+    # Populate the file tree with initial data (only if a workspace is provided)
+    if folder_path_to_explore:
+        print("Populating file tree...")
+        populate_tree(file_tree, '', folder_path_to_explore)
+        print("File tree populated")
+    else:
+        print("No workspace selected - file tree is empty")
 
     # ========================================================================
     # EVENT BINDINGS - File tree interactions
@@ -1337,11 +1399,8 @@ def main_initial_window():
 
     # Launch the main GUI window
     print("Launching GUI...")
-    workspace_path = os.path.expanduser("~/Exp")
-    if not os.path.exists(workspace_path):
-        print(f"Warning: Default workspace path '{workspace_path}' does not exist. Using home directory instead.")
-        workspace_path = os.path.expanduser("~")
-    create_file_explorer_window(workspace_path, None)
+    # Start with no workspace, user must choose one
+    create_file_explorer_window(None, None)
 
 # ============================================================================
 # SCRIPT EXECUTION

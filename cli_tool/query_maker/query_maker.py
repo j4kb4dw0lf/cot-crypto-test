@@ -476,9 +476,11 @@ def family_clause_function_name(subcategory: str, tokens, alt: str):
     #   No letters
     right_boundary = '([^a-zA-Z]|$)'
 
-    # Special case: "sha" alone should not match when followed by digits.
-    # To permit categorization to specific families (e.g SHA-2) instead of SHA-general
-    if tokens == ['sha']:
+    # Special case: SHA algorithms should not match when followed by digits.
+    # This prevents false positives like:
+    # - SHA-1 pattern "sha[-_]?1" matching "sha1" in "sha100"
+    # - SHA-3 pattern "sha[-_]?3" matching "sha3" in "sha384"
+    if tokens == ['sha'] or subcategory in ['SHA-1', 'SHA-2', 'SHA-3']:
         right_boundary = '([^a-zA-Z0-9]|$)'
 
     # Patterns
@@ -509,9 +511,11 @@ def family_clause_argument(subcategory: str, tokens, alt: str):
     left_boundary = '(^|[^a-zA-Z0-9]|[0-9][-_])'
     right_boundary = '([^a-zA-Z]|$)'
 
-    # Special case: "sha" alone should not match when followed by digits.
-    # To permit categorization to specific families (e.g SHA-2) instead of SHA-general
-    if tokens == ['sha']:
+    # Special case: SHA algorithms should not match when followed by digits.
+    # This prevents false positives like:
+    # - SHA-1 pattern "sha[-_]?1" matching "sha1" in "sha100"
+    # - SHA-3 pattern "sha[-_]?3" matching "sha3" in "sha384"
+    if tokens == ['sha'] or subcategory in ['SHA-1', 'SHA-2', 'SHA-3']:
         right_boundary = '([^a-zA-Z0-9]|$)'
 
     p1 = f'.*{left_boundary}({lower_group}){right_boundary}.*'
@@ -556,6 +560,8 @@ def generate_query_regexp_calls_and_args():
     header = textwrap.dedent("""
         /**
  * @id cpp/primitives-functions-regexp-analysis
+ * @kind problem
+ * @problem.severity warning
  * @name Insecure cryptographic algorithm specified by macro
  * @description Finds an insecure cryptographic algorithm specified as a macro. This query prioritizes the longest matching token to provide the most specific result.
  * @tags security
@@ -600,11 +606,8 @@ def generate_query_regexp_calls_and_args():
               )
             )
           )
-select
-  vulnContent,
-  algorithm as category,
-  alternative,
-  call.getLocation() as line
+select call.getLocation(),
+\"Vuln content:\" + vulnContent + "\\n" + \"Algorithm:\" + algorithm + \"\\n\" + \"Alternative:\" + alternative
 
     """)
 
@@ -635,10 +638,12 @@ def generate_query_regexp_macro():
         expanded = with_sep_variants(toks_lower)
         lower_group = "|".join(expanded)
 
-        # Special case: "sha" alone should not match when followed by digits
-        # To permit categorization to specific families (e.g SHA-2) instead of SHA-general
+        # Special case: SHA algorithms should not match when followed by digits.
+        # This prevents false positives like:
+        # - SHA-1 pattern "sha[-_]?1" matching "sha1" in "sha100"
+        # - SHA-3 pattern "sha[-_]?3" matching "sha3" in "sha384"
         right_bound = '([^a-zA-Z]|$)'
-        if tokens == ['sha']:
+        if tokens == ['sha'] or sub in ['SHA-1', 'SHA-2', 'SHA-3']:
             right_bound = '([^a-zA-Z0-9]|$)'
 
         p = f'.*((^|[^a-zA-Z0-9]|[0-9][-_])({lower_group}){right_bound}).*'
@@ -650,6 +655,8 @@ def generate_query_regexp_macro():
     header = textwrap.dedent("""
         /**
  * @id cpp/primitives-macro-regexp-analysis
+ * @kind problem
+ * @problem.severity warning
  * @name Insecure cryptographic algorithm specified by macro
  * @description Finds an insecure cryptographic algorithm specified as a macro. This query prioritizes the longest matching token to provide the most specific result.
  * @tags security
@@ -670,13 +677,10 @@ def generate_query_regexp_macro():
 
     tail = textwrap.dedent("""
           )
-    select
-      mi.getMacro().getName() as vulnContent,
-      algorithm as category,
-      alternative,
-      mi.getLocation() as line
+    select mi.getLocation(),
+    \"Vuln content:\" + mi.getMacro().getName() + "\\n" + \"Algorithm:\" + algorithm + \"\\n\" + \"Alternative:\" + alternative
 
-        """)
+     """)
 
     return header + "\n" + matches_conc + "\n\n" + body + "\n            or ".join(macro_clauses) + "\n" + tail
 # ======== Fine added features ========
