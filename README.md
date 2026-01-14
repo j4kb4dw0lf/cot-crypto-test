@@ -33,7 +33,7 @@ If the codebase to be analyzed is not owned, it is recommended to check the code
 Note:
 Database creation can take a while. Check the VS Code Terminal tab (not to be confused with the Output tab) to see the live logs.
 
-6) After creating the database, “Run CodeQL Analysis” and then with "Load SARIF" if possible to see the results.
+6) After creating the database, “Run CodeQL Analysis” and then with "Load SARIF" is possible to see the results.
 
 ### Usage GUI
 1) Run `python ui.py`
