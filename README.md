@@ -24,7 +24,7 @@ cd C:\krb5-1.21.3\src
 set PATH=%PATH%;C:\Program Files\Git\usr\bin
 nmake clean
 nmake -f Makefile.in prep-windows
-nmake NODEBUG=1
+nmake NODEBUG=1 NO_LEASH=1
 ```
 Assuming that the shell script is stored in `C:\krb5-1.21.3\build.bat`, it is enough to specify this path when prompted.
 
