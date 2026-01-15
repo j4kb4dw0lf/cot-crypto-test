@@ -1,0 +1,88 @@
+{
+  "name": "COTproj-vscode",
+  "displayName": "COTproj Tools",
+  "description": "Run the ui.py capabilities (CodeQL database creation, analysis, reports) directly from VS Code.",
+  "version": "0.0.1",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.70.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:cot.actions",
+    "onCommand:cot.launchGui",
+    "onCommand:cot.generateQueries",
+    "onCommand:cot.createCodeqlDb",
+    "onCommand:cot.runAnalysis",
+    "onCommand:cot.loadSarif",
+    "onCommand:cot.openIssue",
+    "onCommand:cot.pickWorkspace"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "cot",
+          "title": "COTproj",
+          "icon": "media/qa.svg"
+        }
+      ]
+    },
+    "views": {
+      "cot": [
+        {
+          "id": "cot.actions",
+          "name": "COTproj Actions"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "cot.launchGui",
+        "title": "COTproj: Launch Tk UI"
+      },
+      {
+        "command": "cot.generateQueries",
+        "title": "COTproj: Pre-generate QL Queries"
+      },
+      {
+        "command": "cot.createCodeqlDb",
+        "title": "COTproj: Create CodeQL Database"
+      },
+      {
+        "command": "cot.runAnalysis",
+        "title": "COTproj: Run CodeQL Analysis"
+      },
+      {
+        "command": "cot.loadSarif",
+        "title": "COTproj: Load SARIF and Show Diagnostics"
+      },
+      {
+        "command": "cot.openIssue",
+        "title": "COTproj: Open Issue Location"
+      },
+      {
+        "command": "cot.pickWorkspace",
+        "title": "COTproj: Choose Workspace/Codebase"
+      }
+    ],
+    "configuration": {
+      "title": "COT",
+      "properties": {
+        "cot.pythonPath": {
+          "type": "string",
+          "default": "python3",
+          "description": "Python executable used to run ui.py and the bridge script."
+        },
+        "cot.defaultOutputDir": {
+          "type": "string",
+          "default": "",
+          "description": "Optional default output directory for analysis artifacts. If empty, the database parent folder is used."
+        }
+      }
+    }
+  }
+}

@@ -9,7 +9,7 @@ The `fpdf` module is required and can be installed with pip: `pip install fpdf`
 
 ### Usage VS Code Extension
 1) You can run the extension going to the root folder with ```code --extensionDevelopmentPath "%cd%\vscode-extension"``` for Windows environment or ```code --extensionDevelopmentPath "$(pwd)/vscode-extension"``` for Linux environment.
-2) Add the folder with the codebase to analyze with the "Explorer" pane.
+2) Add the folder with the codebase to analyze with the "Explorer" pane or directly from the extension.
 3) Go to the extension and run "Pre-generate QL Queries" action. It will print also where those queries are generated.
 Note: `query_macro.ql`, `query_noargs.ql`, `query_withargs.ql` are the queries to test "Approach A" mentioned in the Overview file.
 The other .ql files use regex and lead to better results.
