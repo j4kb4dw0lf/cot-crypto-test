@@ -19,16 +19,13 @@ The other .ql files use regex and lead to better results.
 6) It will ask for the build command. If skipped, CodeQL can try to detect automatically which commands are needed, but it can often fail.
 It is recommended to know which command is needed to build the codebase. If multiple commands are required, it is recommended to create an .sh/.bat file with the build steps and provide the script’s path as the build command.
 
-For example, for krb5 in a Windows environment, some additional steps are required. A realistic shell script to build the codebase could look like the following:
+For example, for krb5 in a Linux environment, some additional steps are required. A realistic shell script to build the codebase could look like the following:
 ```sh
-call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat" x64
-cd C:\krb5-1.21.3\src
-set PATH=%PATH%;C:\Program Files\Git\usr\bin
-nmake clean
-nmake -f Makefile.in prep-windows
-nmake NODEBUG=1 NO_LEASH=1
+make clean
+./configure
+make
 ```
-Assuming that the shell script is stored in `C:\krb5-1.21.3\build.bat`, it is enough to specify this path when prompted.
+Assuming that the shell script is stored in `$HOME/build.sh`, it is enough to specify this path when prompted.
 
 If the codebase to be analyzed is not owned, it is recommended to check the codebase documentation/guide to understand which steps are necessary to compile it.
 
