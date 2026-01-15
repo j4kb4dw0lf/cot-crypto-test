@@ -7,6 +7,8 @@ More info: [Overview](Overview.md)
 ### Prerequisites
 The `fpdf` module is required and can be installed with pip: `pip install fpdf`
 
+If a Python virtual environment is used to install the module, the same virtual environment should be used before running the VS Code extension command.
+
 ### Usage VS Code Extension
 1) You can run the extension going to the root folder with ```code --extensionDevelopmentPath "%cd%\vscode-extension"``` for Windows environment or ```code --extensionDevelopmentPath "$(pwd)/vscode-extension"``` for Linux environment.
 2) Add the folder with the codebase to analyze with the "Explorer" pane or directly from the extension.
