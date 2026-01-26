@@ -597,10 +597,47 @@ def action_analyze_codeql_database(tree, status_label_widget=None, tab_creator_c
                         print(f"SUCCESS: Merged SARIF saved to: {res_sarif_path}")
                     else:
                         print(f"ERROR: Failed to merge SARIF files. Exit code: {result_merge.returncode}")
-
+            
                 except Exception as e:
                     print(f"ERROR: Failed to merge SARIF files: {e}")
                     print(traceback.format_exc())
+            
+            # ============================================
+            # TOKENIZE CONCATENATED RESULTS
+            # ============================================
+            if os.path.exists(res_sarif_path):
+                try:
+                    print(f"\n{'='*60}")
+                    print(f"Tokenizing Concatenated results...")
+                    print(f"{'='*60}")
+                    
+                    # Call tokenizer script
+                    tokenizer_script = os.path.join(os.path.dirname(__file__), "tokenize_sarif.py")
+                    
+                    if os.path.exists(tokenizer_script):
+                        cmd_tokenize = [sys.executable, tokenizer_script, res_sarif_path]
+                        result_tokenize = subprocess.run(
+                            cmd_tokenize,
+                            capture_output=True,
+                            text=True,
+                            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                        )
+                        
+                        if result_tokenize.stdout:
+                            print(result_tokenize.stdout)
+                        if result_tokenize.stderr:
+                            print(f"STDERR:\n{result_tokenize.stderr}")
+                        
+                        if result_tokenize.returncode == 0:
+                            print(f"SUCCESS: SARIF enriched with tokenized results")
+                        else:
+                            print(f"WARNING: Tokenizer failed, using original SARIF")
+                    else:
+                        print(f"WARNING: tokenize_sarif.py not found, skipping tokenization")
+                
+                except Exception as e:
+                    print(f"WARNING: Error during tokenization: {e}")
+                    print("Continuing with original SARIF...")
 
             # Summary
             print(f"\n{'='*60}")
